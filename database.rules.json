@@ -1,0 +1,51 @@
+{
+  "rules": {
+    "passengers": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid == $uid",
+        ".validate": "newData.hasChildren(['uid', 'email'])"
+      }
+    },
+    "drivers": {
+      "$driverId": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid == $driverId",
+        "isApproved": {
+          ".write": "auth != null && auth.token.admin == true"
+        }
+      }
+    },
+    "auto_status": {
+      "$autoId": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        ".validate": "newData.child('availableSeats').isNumber() && newData.child('availableSeats').val() >= 0 && newData.child('availableSeats').val() <= 8"
+      }
+    },
+    "locations": {
+      "$driverId": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid == $driverId"
+      }
+    },
+    "routes": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.token.admin == true"
+    },
+    "passenger_demand": {
+      "$demandId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() || data.child('passengerId').val() == auth.uid)",
+        ".validate": "newData.hasChildren(['passengerId', 'stopId', 'requestedSeats', 'status'])"
+      }
+    },
+    "rideRequests": {
+      "$requestId": {
+        ".read": "auth != null",
+        ".write": "auth != null && (!data.exists() && newData.child('passengerId').val() == auth.uid || data.child('passengerId').val() == auth.uid || data.child('driverId').val() == auth.uid)",
+        ".validate": "newData.child('status').isString()"
+      }
+    }
+  }
+}

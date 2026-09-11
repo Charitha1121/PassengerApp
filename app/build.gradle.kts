@@ -6,9 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.ruraltransport"
-    compileSdk {
-        version = release(37)
-    }
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.example.ruraltransport"
@@ -18,15 +16,12 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        manifestPlaceholders["MAPS_API_KEY"] ="AIzaSyDoHjruurKjI6XvPVfN5l_ZGxBaa-6afvA"
-            project.properties["MAPS_API_KEY"] ?: ""
+        manifestPlaceholders["MAPS_API_KEY"] = "AIzaSyDoHjruurKjI6XvPVfN5l_ZGxBaa-6afvA"
     }
 
     buildTypes {
         release {
-            optimization {
-                enable = false
-            }
+            isMinifyEnabled = false
         }
     }
     compileOptions {
@@ -56,6 +51,15 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.play.services.location)
     implementation(libs.androidx.compose.runtime)
+
+    // Firebase (BOM managed)
     implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
     implementation("com.google.firebase:firebase-database")
+    implementation("com.google.firebase:firebase-auth")
+
+    // Navigation & MVVM
+    implementation("androidx.navigation:navigation-compose:2.8.5")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
+    implementation("androidx.compose.material:material-icons-extended")
 }
