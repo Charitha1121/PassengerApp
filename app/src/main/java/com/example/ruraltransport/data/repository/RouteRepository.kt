@@ -14,29 +14,29 @@ class RouteRepository(
         TransportStop(
             id = "STOP_01",
             name = "Gurramguda",
-            latitude = 16.5062,
-            longitude = 80.6480,
+            latitude = 17.2942,
+            longitude = 78.5675,
             sequence = 1
         ),
         TransportStop(
             id = "STOP_02",
             name = "Jay Suryapatnam",
-            latitude = 16.5000,
-            longitude = 80.6550,
+            latitude = 17.2885,
+            longitude = 78.5605,
             sequence = 2
         ),
         TransportStop(
             id = "STOP_03",
             name = "Sphoorthy College",
-            latitude = 16.4950,
-            longitude = 80.6620,
+            latitude = 17.2820,
+            longitude = 78.5538,
             sequence = 3
         ),
         TransportStop(
             id = "STOP_04",
             name = "Nadergul",
-            latitude = 16.4900,
-            longitude = 80.6700,
+            latitude = 17.2746,
+            longitude = 78.5400,
             sequence = 4
         )
     )

@@ -138,32 +138,32 @@ val ruralRoute = listOf(
     TransportStop(
         id = "STOP_01",
         name = "Gurramguda",
-        latitude = 16.5062,
-        longitude = 80.6480,
+        latitude = 17.2942,
+        longitude = 78.5675,
         sequence = 1
     ),
 
     TransportStop(
         id = "STOP_02",
         name = "Jay Suryapatnam",
-        latitude = 16.5000,
-        longitude = 80.6550,
+        latitude = 17.2885,
+        longitude = 78.5605,
         sequence = 2
     ),
 
     TransportStop(
         id = "STOP_03",
         name = "Sphoorthy College",
-        latitude = 16.4950,
-        longitude = 80.6620,
+        latitude = 17.2820,
+        longitude = 78.5538,
         sequence = 3
     ),
 
     TransportStop(
         id = "STOP_04",
         name = "Nadergul",
-        latitude = 16.4900,
-        longitude = 80.6700,
+        latitude = 17.2746,
+        longitude = 78.5400,
         sequence = 4
     )
 )
@@ -241,6 +241,8 @@ class MainActivity : ComponentActivity() {
 
                 val journeyViewModel: JourneyViewModel = viewModel()
                 val passengerViewModel: PassengerViewModel = viewModel()
+                val activeRideViewModel: ActiveRideViewModel = viewModel()
+                val liveTrackingViewModel: com.example.ruraltransport.ui.map.LiveTrackingViewModel = viewModel()
 
                 AppNavigation(
                     homeContent = { onNavigateToProfile, onNavigateToMap ->
@@ -248,13 +250,17 @@ class MainActivity : ComponentActivity() {
                             onNavigateToProfile = onNavigateToProfile,
                             onOpenMap = onNavigateToMap,
                             journeyViewModel = journeyViewModel,
-                            passengerViewModel = passengerViewModel
+                            passengerViewModel = passengerViewModel,
+                            activeRideViewModel = activeRideViewModel,
+                            liveTrackingViewModel = liveTrackingViewModel
                         )
                     },
                     mapContent = { onBack ->
                         LiveTrackingMapScreen(
                             journeyViewModel = journeyViewModel,
                             passengerViewModel = passengerViewModel,
+                            activeRideViewModel = activeRideViewModel,
+                            liveTrackingViewModel = liveTrackingViewModel,
                             onBack = onBack
                         )
                     }
@@ -291,7 +297,8 @@ fun RuralTransportApp(
     journeyViewModel: JourneyViewModel = viewModel(),
     forecastViewModel: ForecastViewModel = viewModel(),
     activeRideViewModel: ActiveRideViewModel = viewModel(),
-    passengerViewModel: com.example.ruraltransport.ui.home.PassengerViewModel = viewModel()
+    passengerViewModel: com.example.ruraltransport.ui.home.PassengerViewModel = viewModel(),
+    liveTrackingViewModel: com.example.ruraltransport.ui.map.LiveTrackingViewModel = viewModel()
 ) {
 
     var currentScreen by remember {
@@ -334,6 +341,7 @@ fun RuralTransportApp(
             HomeScreen(
                 journeyViewModel = journeyViewModel,
                 passengerViewModel = passengerViewModel,
+                liveTrackingViewModel = liveTrackingViewModel,
                 onNavigateToProfile = onNavigateToProfile,
                 onNavigateToForecast = { routeId, pickupId, destId, targetEpochMillis, queryEpochMillis ->
                     val foundPickup = ruralRoute.find { it.id == pickupId } ?: ruralRoute.first()
@@ -2006,14 +2014,17 @@ fun AnimatedDriverMarker(
         label = "driverLng"
     )
     val animRotation by animateFloatAsState(
-        targetValue = driver.heading,
+        targetValue = if (driver.heading.isFinite()) driver.heading else 0f,
         animationSpec = tween(durationMillis = 500, easing = LinearEasing),
         label = "driverHeading"
     )
 
-    val currentPosition = LatLng(animLat.toDouble(), animLng.toDouble())
-    val markerState = rememberMarkerState(position = currentPosition)
-    LaunchedEffect(animLat, animLng) {
+    val currentLat = if (animLat.isFinite()) animLat.toDouble() else 0.0
+    val currentLng = if (animLng.isFinite()) animLng.toDouble() else 0.0
+    val currentPosition = LatLng(currentLat, currentLng)
+    
+    val markerState = rememberMarkerState(key = driver.driverId, position = currentPosition)
+    LaunchedEffect(currentPosition) {
         markerState.position = currentPosition
     }
 
@@ -2043,6 +2054,16 @@ fun RuralTransportMap(
 ) {
     val context = LocalContext.current
     val journeyState by journeyViewModel.uiState.collectAsState()
+
+    // Ensure Google Maps is initialized
+    LaunchedEffect(Unit) {
+        try {
+            com.google.android.gms.maps.MapsInitializer.initialize(context)
+        } catch (e: Exception) {
+            android.util.Log.e("RuralTransportMap", "MapsInitializer failed: ${e.message}")
+        }
+    }
+
     val waitingState by passengerViewModel.waitingState.collectAsState()
     val liveDrivers by passengerViewModel.liveDrivers.collectAsState()
 
@@ -2118,8 +2139,10 @@ fun RuralTransportMap(
         ?: RouteData.canonicalStops.first()
 
     val cameraPositionState = rememberCameraPositionState {
+        val lat = if (pickupTransportStop.latitude.isFinite()) pickupTransportStop.latitude else 17.2942
+        val lng = if (pickupTransportStop.longitude.isFinite()) pickupTransportStop.longitude else 78.5675
         position = CameraPosition.fromLatLngZoom(
-            LatLng(pickupTransportStop.latitude, pickupTransportStop.longitude),
+            LatLng(lat, lng),
             13.5f
         )
     }
@@ -2131,52 +2154,63 @@ fun RuralTransportMap(
         ) {
             // CORRIDOR ROUTE POLYLINE
             Polyline(
-                points = RouteData.canonicalStops.map { LatLng(it.latitude, it.longitude) },
+                points = RouteData.canonicalStops
+                    .filter { it.latitude.isFinite() && it.longitude.isFinite() }
+                    .map { LatLng(it.latitude, it.longitude) },
                 color = Color(0xFF1976D2),
                 width = 10f
             )
 
             // CORRIDOR STOPS MARKERS
             RouteData.canonicalStops.forEach { stop ->
-                val isPickup = stop.name.equals(pickupStop, true)
-                val isDest = stop.name.equals(destStop, true)
+                if (stop.latitude.isFinite() && stop.longitude.isFinite()) {
+                    val isPickup = stop.name.equals(pickupStop, true)
+                    val isDest = stop.name.equals(destStop, true)
 
-                val markerTitle = when {
-                    isPickup -> "Pickup: ${stop.name}"
-                    isDest -> "Destination: ${stop.name}"
-                    else -> stop.name
-                }
-                val markerSnippet = when {
-                    isPickup -> "Your boarding stop (${stop.sequence}/4)"
-                    isDest -> "Your destination (${stop.sequence}/4)"
-                    else -> "Corridor Stop ${stop.sequence}"
-                }
+                    val markerTitle = when {
+                        isPickup -> "Pickup: ${stop.name}"
+                        isDest -> "Destination: ${stop.name}"
+                        else -> stop.name
+                    }
+                    val markerSnippet = when {
+                        isPickup -> "Your boarding stop (${stop.sequence}/4)"
+                        isDest -> "Your destination (${stop.sequence}/4)"
+                        else -> "Corridor Stop ${stop.sequence}"
+                    }
 
-                Marker(
-                    state = rememberMarkerState(position = LatLng(stop.latitude, stop.longitude)),
-                    title = markerTitle,
-                    snippet = markerSnippet
-                )
+                    Marker(
+                        state = rememberMarkerState(
+                            key = "stop_${stop.name}",
+                            position = LatLng(stop.latitude, stop.longitude)
+                        ),
+                        title = markerTitle,
+                        snippet = markerSnippet
+                    )
+                }
             }
 
             // USER LOCATION MARKER
             currentLocation?.let { loc ->
-                Marker(
-                    state = rememberMarkerState(position = loc),
-                    title = "Your Location",
-                    snippet = "GPS Position"
-                )
+                if (loc.latitude.isFinite() && loc.longitude.isFinite()) {
+                    Marker(
+                        state = rememberMarkerState(key = "user_location", position = loc),
+                        title = "Your Location",
+                        snippet = "GPS Position"
+                    )
+                }
             }
 
             // LIVE ANIMATED DRIVER VEHICLE MARKERS
             liveDrivers.forEach { driver ->
-                key(driver.driverId) {
-                    AnimatedDriverMarker(
-                        driver = driver,
-                        passengerPickupStop = pickupStop,
-                        direction = direction,
-                        onMarkerClick = { selectedDriver = it }
-                    )
+                if (driver.position.latitude.isFinite() && driver.position.longitude.isFinite()) {
+                    key(driver.driverId) {
+                        AnimatedDriverMarker(
+                            driver = driver,
+                            passengerPickupStop = pickupStop,
+                            direction = direction,
+                            onMarkerClick = { selectedDriver = it }
+                        )
+                    }
                 }
             }
         }

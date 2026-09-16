@@ -521,6 +521,8 @@ private fun ForecastContent(
             val currentUser = FirebaseAuth.getInstance().currentUser
             val isAuthReady = currentUser != null
 
+            // STEP 5: "Request Auto" flow is disabled for today; "I'm Waiting" is the sole passenger interaction.
+            /*
             Button(
                 onClick = { if (isAuthReady) onRequestRide(forecast) },
                 enabled = isAuthReady,
@@ -547,6 +549,7 @@ private fun ForecastContent(
             }
 
             Spacer(modifier = Modifier.height(8.dp))
+            */
 
             val isCurrentlyWaitingHere = waitingState.isWaiting &&
                 (waitingState.pickupStop.equals(forecast.pickupStopName, ignoreCase = true) ||

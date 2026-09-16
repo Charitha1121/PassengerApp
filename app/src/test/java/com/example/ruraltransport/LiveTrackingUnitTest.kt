@@ -1,6 +1,8 @@
 package com.example.ruraltransport
 
+import com.example.ruraltransport.data.model.GeoUtils
 import com.example.ruraltransport.data.model.LiveDriverPosition
+import com.example.ruraltransport.data.model.RouteData
 import com.example.ruraltransport.ui.map.shortestAngleDiff
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,11 +15,13 @@ class LiveTrackingUnitTest {
     fun testLiveDriverPositionDefaults() {
         val driver = LiveDriverPosition(
             driverUid = "driver_123",
-            lat = 16.5062,
-            lng = 80.6480,
+            lat = 17.2942,
+            lng = 78.5675,
             heading = 90f,
             speed = 8.5f,
             isRideActive = true,
+            isAvailable = true,
+            availableSeats = 3,
             lastUpdated = 1700000000L,
             routeId = "ROUTE_01",
             driverName = "Ramesh Auto",
@@ -25,14 +29,109 @@ class LiveTrackingUnitTest {
         )
 
         assertEquals("driver_123", driver.driverUid)
-        assertEquals(16.5062, driver.lat, 0.0001)
-        assertEquals(80.6480, driver.lng, 0.0001)
+        assertEquals(17.2942, driver.lat, 0.0001)
+        assertEquals(78.5675, driver.lng, 0.0001)
         assertEquals(90f, driver.heading, 0.01f)
         assertEquals(8.5f, driver.speed, 0.01f)
         assertTrue(driver.isRideActive)
+        assertTrue(driver.isAvailable)
+        assertEquals(3, driver.availableSeats)
         assertEquals("ROUTE_01", driver.routeId)
         assertEquals("Ramesh Auto", driver.driverName)
         assertEquals("AP29 AB 1234", driver.vehicleNumber)
+    }
+
+    @Test
+    fun testCorridorStopsAreInTelangana() {
+        val stops = RouteData.canonicalStops
+        assertEquals(4, stops.size)
+
+        // Sphoorthy College should be ~17.2820°N, 78.5538°E
+        val sphoorthy = stops.find { it.name == "Sphoorthy College" }
+        assertTrue("Sphoorthy College must be present", sphoorthy != null)
+        assertEquals(17.2820, sphoorthy!!.latitude, 0.001)
+        assertEquals(78.5538, sphoorthy.longitude, 0.001)
+
+        // All stops must be in Telangana corridor (17.2° - 17.4° N, 78.4° - 78.6° E)
+        for (stop in stops) {
+            assertTrue("${stop.name} lat in Telangana", stop.latitude in 17.2..17.4)
+            assertTrue("${stop.name} lng in Telangana", stop.longitude in 78.4..78.6)
+        }
+    }
+
+    @Test
+    fun testGeoUtilsDistanceAndEta() {
+        // Distance between Gurramguda (17.2942, 78.5675) and Sphoorthy College (17.2820, 78.5538)
+        val distKm = GeoUtils.calculateDistanceKm(17.2942, 78.5675, 17.2820, 78.5538)
+        assertTrue("Distance should be roughly 1.5 - 2.5 km", distKm in 1.5..2.5)
+
+        // At 20 km/h:
+        // ~2 km at 20 km/h is 0.1 hour = 6 minutes
+        val eta = GeoUtils.calculateEtaMinutes(distKm, avgSpeedKmh = 20.0)
+        assertTrue("ETA should be between 4 and 8 minutes", eta in 4..8)
+
+        // Zero distance
+        assertEquals(0, GeoUtils.calculateEtaMinutes(0.0))
+        assertEquals(0.0, GeoUtils.calculateDistanceKm(0.0, 0.0, 17.2820, 78.5538), 0.0001)
+    }
+
+    @Test
+    fun testCorridorBrowseDriverFilteringLogic() {
+        val drivers = listOf(
+            LiveDriverPosition(
+                driverUid = "d1",
+                lat = 17.2942,
+                lng = 78.5675,
+                isAvailable = true,
+                routeId = "ROUTE_01",
+                activeDirection = "FORWARD"
+            ),
+            LiveDriverPosition(
+                driverUid = "d2",
+                lat = 17.2885,
+                lng = 78.5605,
+                isAvailable = false, // Not available
+                routeId = "ROUTE_01",
+                activeDirection = "FORWARD"
+            ),
+            LiveDriverPosition(
+                driverUid = "d3",
+                lat = 0.0,
+                lng = 0.0, // Unset coordinates
+                isAvailable = true,
+                routeId = "ROUTE_01",
+                activeDirection = "FORWARD"
+            ),
+            LiveDriverPosition(
+                driverUid = "d4",
+                lat = 17.2820,
+                lng = 78.5538,
+                isAvailable = true,
+                routeId = "ROUTE_02", // Different corridor
+                activeDirection = "FORWARD"
+            ),
+            LiveDriverPosition(
+                driverUid = "d5",
+                lat = 17.2746,
+                lng = 78.5400,
+                isAvailable = true,
+                routeId = "ROUTE_01",
+                activeDirection = "REVERSE" // Opposite direction
+            )
+        )
+
+        val targetRouteId = "ROUTE_01"
+        val targetDirection = "FORWARD"
+
+        val filtered = drivers.filter { driver ->
+            driver.isAvailable &&
+            (driver.lat.isFinite() && driver.lng.isFinite() && (driver.lat != 0.0 || driver.lng != 0.0)) &&
+            (driver.routeId.isBlank() || driver.routeId.equals(targetRouteId, ignoreCase = true)) &&
+            (driver.activeDirection.isBlank() || driver.activeDirection.equals(targetDirection, ignoreCase = true))
+        }
+
+        assertEquals(1, filtered.size)
+        assertEquals("d1", filtered.first().driverUid)
     }
 
     @Test
@@ -52,50 +151,6 @@ class LiveTrackingUnitTest {
         // Exact reverse turn
         val uTurn = shortestAngleDiff(0f, 180f)
         assertEquals(180f, kotlin.math.abs(uTurn), 0.01f)
-    }
-
-    @Test
-    fun testDriverFilteringLogic() {
-        val drivers = listOf(
-            LiveDriverPosition(
-                driverUid = "d1",
-                lat = 16.5062,
-                lng = 80.6480,
-                isRideActive = true,
-                routeId = "ROUTE_01"
-            ),
-            LiveDriverPosition(
-                driverUid = "d2",
-                lat = 16.5000,
-                lng = 80.6550,
-                isRideActive = false, // Ride inactive
-                routeId = "ROUTE_01"
-            ),
-            LiveDriverPosition(
-                driverUid = "d3",
-                lat = 0.0,
-                lng = 0.0, // Unset coordinates
-                isRideActive = true,
-                routeId = "ROUTE_01"
-            ),
-            LiveDriverPosition(
-                driverUid = "d4",
-                lat = 16.4950,
-                lng = 80.6620,
-                isRideActive = true,
-                routeId = "ROUTE_02" // Different corridor
-            )
-        )
-
-        val targetRouteId = "ROUTE_01"
-        val filtered = drivers.filter { driver ->
-            driver.isRideActive &&
-            (driver.lat != 0.0 || driver.lng != 0.0) &&
-            (driver.routeId.isBlank() || driver.routeId.equals(targetRouteId, ignoreCase = true))
-        }
-
-        assertEquals(1, filtered.size)
-        assertEquals("d1", filtered.first().driverUid)
     }
 
     @Test

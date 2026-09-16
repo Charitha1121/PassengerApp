@@ -12,8 +12,15 @@ data class LiveDriverPosition(
     val heading: Float = 0f,
     val speed: Float = 0f,
     val isRideActive: Boolean = false,
+    val isAvailable: Boolean = true,
+    val availableSeats: Int = 3,
     val lastUpdated: Long = 0L,
     val routeId: String = "",
+    val activeDirection: String = "",
+    val currentStop: String = "",
     val driverName: String = "Auto Driver",
-    val vehicleNumber: String = ""
+    val vehicleNumber: String = "",
+    val phone: String = "",
+    val distanceKmToPickup: Double? = null,
+    val etaMinutesToPickup: Int? = null
 )

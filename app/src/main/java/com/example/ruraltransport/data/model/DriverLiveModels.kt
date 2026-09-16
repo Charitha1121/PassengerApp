@@ -38,5 +38,34 @@ data class LiveDriverUiModel(
     val availableSeats: Int,
     val stopsAway: Int,
     val isAtPassengerStop: Boolean,
-    val lastUpdated: Long
+    val lastUpdated: Long,
+    val distanceKm: Double = 0.0,
+    val etaMinutes: Int = 0
 )
+
+object GeoUtils {
+    /**
+     * Calculates the great-circle distance between two points on the Earth (in km) using Haversine formula.
+     */
+    fun calculateDistanceKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        if (lat1 == 0.0 && lon1 == 0.0) return 0.0
+        if (lat2 == 0.0 && lon2 == 0.0) return 0.0
+        val earthRadiusKm = 6371.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+                kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
+                kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
+        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+        return earthRadiusKm * c
+    }
+
+    /**
+     * Estimates travel time in minutes based on distance and average speed (default 20 km/h for rural auto corridor).
+     */
+    fun calculateEtaMinutes(distanceKm: Double, avgSpeedKmh: Double = 20.0): Int {
+        if (distanceKm <= 0.0 || avgSpeedKmh <= 0.0) return 0
+        val hours = distanceKm / avgSpeedKmh
+        return kotlin.math.round((hours * 60)).toInt().coerceAtLeast(1)
+    }
+}

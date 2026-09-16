@@ -6,6 +6,9 @@ import com.example.ruraltransport.data.model.MatchedDriver
 import com.example.ruraltransport.data.model.LiveDriverPosition
 import com.example.ruraltransport.data.model.RideRequest
 import com.example.ruraltransport.data.model.RideStatus
+import com.example.ruraltransport.data.model.GeoUtils
+import com.example.ruraltransport.data.model.RouteDirection
+import com.google.android.gms.maps.model.LatLng
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
@@ -544,21 +547,30 @@ class RideRepository(
                             }
 
                             // Filtering Rules:
-                            // 1. Must be online
-                            if (!isOnline) continue
+                            // 1. Must be online or available (robust checks)
+                            val isAvailable = driverSnap.getBooleanSafe("isAvailable", default = false)
+                            if (!isOnline && !isAvailable) continue
 
-                            // 2. Must match the route corridor (if corridor is specified)
-                            if (routeId.isNotBlank() && driverRouteId.isNotBlank() && !driverRouteId.equals(routeId, ignoreCase = true)) {
+                            // 2. Must match the route corridor leniently (ID or name)
+                            val routeMatches = routeId.isBlank() || driverRouteId.isBlank() ||
+                                    driverRouteId.equals(routeId, ignoreCase = true) ||
+                                    driverRouteId.contains(routeId, ignoreCase = true) ||
+                                    routeId.contains(driverRouteId, ignoreCase = true) ||
+                                    (routeId.contains("ROUTE_01", ignoreCase = true) && driverRouteId.contains("Gurramguda", ignoreCase = true)) ||
+                                    (driverRouteId.contains("ROUTE_01", ignoreCase = true) && routeId.contains("Gurramguda", ignoreCase = true))
+                            if (!routeMatches) {
                                 continue
                             }
 
-                            // 3. Must be travelling the same direction
-                            if (!activeDirection.equals(direction.name, ignoreCase = true)) {
+                            // 3. Must be travelling the same direction (lenient check if blank)
+                            if (activeDirection.isNotBlank() && !activeDirection.equals(direction.name, ignoreCase = true)) {
                                 continue
                             }
 
                             // 4. Validate coordinates are finite and non-zero
-                            if (lat.isNaN() || lng.isNaN() || (lat == 0.0 && lng == 0.0)) {
+                            if (!lat.isFinite() || !lng.isFinite() || 
+                                lat < -90.0 || lat > 90.0 || lng < -180.0 || lng > 180.0 ||
+                                (lat == 0.0 && lng == 0.0)) {
                                 continue
                             }
 
@@ -649,7 +661,9 @@ class RideRepository(
                             val lng = liveTrackingSnap.getDoubleSafe("lng", "longitude", default = 0.0)
 
                             // Ignore invalid, NaN, or unset GPS coordinates
-                            if (lat.isNaN() || lng.isNaN() || (lat == 0.0 && lng == 0.0)) continue
+                            if (!lat.isFinite() || !lng.isFinite() || 
+                                lat < -90.0 || lat > 90.0 || lng < -180.0 || lng > 180.0 ||
+                                (lat == 0.0 && lng == 0.0)) continue
 
                             val heading = liveTrackingSnap.getFloatSafe("heading", "bearing", default = 0f)
                             val speed = liveTrackingSnap.getFloatSafe("speed", default = 0f)
@@ -694,6 +708,167 @@ class RideRepository(
 
             override fun onCancelled(error: DatabaseError) {
                 Log.e(TAG, "observeLiveTrackingDrivers onCancelled: ${error.message} (code: ${error.code})")
+                close(error.toException())
+            }
+        }
+
+        driversRef.addValueEventListener(listener)
+        awaitClose { driversRef.removeEventListener(listener) }
+    }
+
+    /**
+     * ISSUE 2: Availability Prediction corridor browse mode.
+     * Listens to the `drivers` node continuously.
+     * Extracts `drivers/{uid}/liveLocation` (broadcast while driver is online/operating).
+     * Filters client-side:
+     * - isAvailable == true (or isOnline == true with availableSeats > 0)
+     * - routeId == selected corridor routeId (if specified)
+     * - activeDirection matches passenger's direction (or empty/compatible)
+     * - lat & lng are valid, finite, and non-zero
+     * Calculates straight-line distance and ETA at 20 km/h to passenger's pickup stop.
+     * Uses a single top-level ValueEventListener (prevents N+1 listener leaks).
+     */
+    fun observeCorridorBrowseDrivers(
+        routeId: String? = null,
+        direction: RouteDirection? = null,
+        pickupLatLng: LatLng? = null
+    ): Flow<List<LiveDriverPosition>> = callbackFlow {
+        val driversRef = database.reference.child("drivers")
+
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                try {
+                    val browseList = mutableListOf<LiveDriverPosition>()
+
+                    for (driverSnap in snapshot.children) {
+                        try {
+                            val uid = driverSnap.key ?: continue
+
+                            val isOnline = driverSnap.getBooleanSafe("isOnline", default = false)
+                            val isAvailable = driverSnap.getBooleanSafe("isAvailable", default = false)
+                            val availableSeats = driverSnap.getIntSafe("availableSeats", default = 3)
+
+                            // 1. Must be online or available (robust checks)
+                            if (!isOnline && !isAvailable) continue
+
+                            val driverRouteId = driverSnap.getStringSafe("routeId")
+                            // 2. Must match the route corridor leniently (ID or name)
+                            val routeMatches = routeId.isNullOrBlank() || driverRouteId.isBlank() ||
+                                    driverRouteId.equals(routeId, ignoreCase = true) ||
+                                    driverRouteId.contains(routeId, ignoreCase = true) ||
+                                    routeId.contains(driverRouteId, ignoreCase = true) ||
+                                    (routeId.contains("ROUTE_01", ignoreCase = true) && driverRouteId.contains("Gurramguda", ignoreCase = true)) ||
+                                    (driverRouteId.contains("ROUTE_01", ignoreCase = true) && routeId.contains("Gurramguda", ignoreCase = true))
+                            if (!routeMatches) {
+                                continue
+                            }
+
+                            val activeDirection = driverSnap.getStringSafe("activeDirection")
+                            // 3. Must match direction leniently if specified
+                            if (direction != null && activeDirection.isNotBlank() &&
+                                !activeDirection.equals(direction.name, ignoreCase = true)
+                            ) {
+                                continue
+                            }
+
+                            // Read liveLocation broadcast continuously while online
+                            val liveLocSnap = driverSnap.child("liveLocation")
+                            val lat = if (liveLocSnap.exists()) {
+                                liveLocSnap.getDoubleSafe("latitude", "lat")
+                            } else {
+                                driverSnap.getDoubleSafe("latitude", "lat")
+                            }
+                            val lng = if (liveLocSnap.exists()) {
+                                liveLocSnap.getDoubleSafe("longitude", "lng")
+                            } else {
+                                driverSnap.getDoubleSafe("longitude", "lng")
+                            }
+
+                            // 4. Coordinates must be finite and non-zero
+                            if (!lat.isFinite() || !lng.isFinite() || 
+                                lat < -90.0 || lat > 90.0 || lng < -180.0 || lng > 180.0 ||
+                                (lat == 0.0 && lng == 0.0)) {
+                                continue
+                            }
+
+                            val heading = if (liveLocSnap.exists()) {
+                                liveLocSnap.getFloatSafe("heading", "bearing")
+                            } else {
+                                driverSnap.getFloatSafe("heading", "bearing")
+                            }
+
+                            val speed = if (liveLocSnap.exists()) {
+                                liveLocSnap.getFloatSafe("speed")
+                            } else {
+                                driverSnap.getFloatSafe("speed")
+                            }
+
+                            val lastUpdated = if (liveLocSnap.exists()) {
+                                liveLocSnap.getLongSafe("lastUpdated", "timestamp", default = System.currentTimeMillis())
+                            } else {
+                                driverSnap.getLongSafe("lastUpdated", "timestamp", default = System.currentTimeMillis())
+                            }
+
+                            val name = driverSnap.getStringSafe("driverName").ifBlank {
+                                driverSnap.getStringSafe("name", default = "Auto Driver")
+                            }
+                            val vehicleNumber = driverSnap.getStringSafe("vehicleNumber", default = "Auto #${uid.takeLast(4).uppercase()}")
+                            val phone = driverSnap.getStringSafe("phone")
+                            val currentStop = driverSnap.getStringSafe("currentStop")
+
+                            // 5. Straight-line distance & rural corridor ETA (20 km/h)
+                            var distanceKm: Double? = null
+                            var etaMinutes: Int? = null
+                            if (pickupLatLng != null) {
+                                val dist = GeoUtils.calculateDistanceKm(
+                                    lat, lng,
+                                    pickupLatLng.latitude, pickupLatLng.longitude
+                                )
+                                distanceKm = dist
+                                etaMinutes = GeoUtils.calculateEtaMinutes(dist, 20.0)
+                            }
+
+                            browseList.add(
+                                LiveDriverPosition(
+                                    driverUid = uid,
+                                    lat = lat,
+                                    lng = lng,
+                                    heading = if (heading.isNaN()) 0f else heading,
+                                    speed = if (speed.isNaN()) 0f else speed,
+                                    isRideActive = false,
+                                    isAvailable = isAvailable,
+                                    availableSeats = availableSeats,
+                                    lastUpdated = lastUpdated,
+                                    routeId = driverRouteId,
+                                    activeDirection = activeDirection,
+                                    currentStop = currentStop,
+                                    driverName = name,
+                                    vehicleNumber = vehicleNumber,
+                                    phone = phone,
+                                    distanceKmToPickup = distanceKm,
+                                    etaMinutesToPickup = etaMinutes
+                                )
+                            )
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Skipping malformed driver snapshot in observeCorridorBrowseDrivers: ${e.message}")
+                        }
+                    }
+
+                    // Sort: nearest distance first
+                    val sorted = if (pickupLatLng != null) {
+                        browseList.sortedBy { it.distanceKmToPickup ?: Double.MAX_VALUE }
+                    } else {
+                        browseList.sortedByDescending { it.lastUpdated }
+                    }
+                    trySend(sorted)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in observeCorridorBrowseDrivers: ${e.message}", e)
+                    trySend(emptyList())
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Log.e(TAG, "observeCorridorBrowseDrivers onCancelled: ${error.message} (code: ${error.code})")
                 close(error.toException())
             }
         }

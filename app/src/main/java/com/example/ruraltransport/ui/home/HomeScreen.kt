@@ -59,11 +59,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.graphics.Color
 import com.example.ruraltransport.data.model.JourneyTimeSelection
 import com.example.ruraltransport.data.model.JourneyValidationResult
 import com.example.ruraltransport.data.model.RouteData
+import com.example.ruraltransport.data.model.RouteDirection
 import com.example.ruraltransport.data.model.TimeSelectionMode
 import com.example.ruraltransport.data.model.TransportStop
+import com.example.ruraltransport.ui.map.LiveTrackingViewModel
+import com.google.android.gms.maps.model.LatLng
 import com.google.firebase.auth.FirebaseAuth
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,6 +75,7 @@ import com.google.firebase.auth.FirebaseAuth
 fun HomeScreen(
     journeyViewModel: JourneyViewModel,
     passengerViewModel: PassengerViewModel = viewModel(),
+    liveTrackingViewModel: LiveTrackingViewModel = viewModel(),
     onNavigateToProfile: () -> Unit,
     onNavigateToForecast: (routeId: String, pickupId: String, destId: String, targetEpochMillis: Long, queryEpochMillis: Long) -> Unit,
     onReportWaiting: (stop: TransportStop) -> Unit = {},
@@ -78,6 +83,7 @@ fun HomeScreen(
 ) {
     val uiState by journeyViewModel.uiState.collectAsState()
     val waitingState by passengerViewModel.waitingState.collectAsState()
+    val activeDrivers by liveTrackingViewModel.activeDrivers.collectAsState()
     var showTimePicker by remember { mutableStateOf(false) }
 
     // Clean up waiting request if navigating away from the waiting screen
@@ -96,6 +102,25 @@ fun HomeScreen(
         if (waitingState.isWaiting && pickupName.isNotBlank() && destName.isNotBlank()) {
             passengerViewModel.updateWaitingJourneyIfChanged(pickupName, destName)
         }
+    }
+
+    // STEP 3: Real-time observation of corridor drivers ordered by proximity
+    val currentRoute = uiState.selectedRoute ?: com.example.ruraltransport.data.repository.RouteRepository().defaultRoute
+    val pickupStop = uiState.pickupStop
+    val destStop = uiState.destinationStop
+    val direction = if (pickupStop != null && destStop != null) {
+        RouteData.getDirection(pickupStop.name, destStop.name)
+    } else {
+        null
+    }
+    val pickupLatLng = pickupStop?.let { LatLng(it.latitude, it.longitude) }
+
+    androidx.compose.runtime.LaunchedEffect(currentRoute.id, direction, pickupLatLng) {
+        liveTrackingViewModel.observeCorridorDrivers(
+            routeId = currentRoute.id,
+            direction = direction,
+            pickupLatLng = pickupLatLng
+        )
     }
 
     val currentUser = FirebaseAuth.getInstance().currentUser
@@ -392,37 +417,249 @@ fun HomeScreen(
                 }
             }
 
-            // Primary Action Buttons
-            item {
-                Button(
-                    onClick = {
-                        if (journeyViewModel.validate()) {
-                            val route = uiState.selectedRoute ?: return@Button
-                            val pickup = uiState.pickupStop ?: return@Button
-                            val dest = uiState.destinationStop ?: return@Button
-                            onNavigateToForecast(
-                                route.id,
-                                pickup.id,
-                                dest.id,
-                                uiState.timeSelection.targetEpochMillis,
-                                uiState.timeSelection.queryEpochMillis
+            // STEP 2 & 3: Conditional Auto List ("Now") vs Prediction Placeholder ("Future Time")
+            if (uiState.timeSelection.mode == TimeSelectionMode.NOW) {
+                // STEP 3: Immediate live auto list, ordered by proximity
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF2E7D32))
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Nearby Available Autos",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            if (activeDrivers.isNotEmpty()) {
+                                Text(
+                                    text = "${activeDrivers.size} operating",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+
+                        if (uiState.pickupStop == null || uiState.destinationStop == null) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.LocationOn,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = "Select pickup & destination to find nearest autos on this corridor.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        } else if (activeDrivers.isEmpty()) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Text(
+                                        text = "No autos currently active nearby",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "No autos detected moving in this direction right now. Tap 'I'm Waiting Here' below so approaching autos see your waiting demand.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        } else {
+                            activeDrivers.forEach { driver ->
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            // STEP 4: Tap list item to view/highlight on map
+                                            liveTrackingViewModel.selectDriver(driver)
+                                            onNavigateToMap()
+                                        },
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surface
+                                    ),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(14.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(44.dp)
+                                                    .clip(CircleShape)
+                                                    .background(MaterialTheme.colorScheme.primaryContainer),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.DirectionsCar,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Column {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(
+                                                        text = driver.driverName.ifBlank { "Auto Driver" },
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    if (driver.vehicleNumber.isNotBlank()) {
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        Text(
+                                                            text = "• ${driver.vehicleNumber}",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                }
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    val distStr = driver.distanceKmToPickup?.let { "%.1f km away".format(it) } ?: "Nearby"
+                                                    val etaStr = driver.etaMinutesToPickup?.let { " (~$it mins ETA)" } ?: ""
+                                                    Text(
+                                                        text = "$distStr$etaStr",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                    if (driver.currentStop.isNotBlank()) {
+                                                        Text(
+                                                            text = " • near ${driver.currentStop}",
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(
+                                                        if (driver.availableSeats > 0) MaterialTheme.colorScheme.secondaryContainer
+                                                        else MaterialTheme.colorScheme.errorContainer
+                                                    )
+                                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                            ) {
+                                                Text(
+                                                    text = "${driver.availableSeats} seats",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (driver.availableSeats > 0) MaterialTheme.colorScheme.onSecondaryContainer
+                                                    else MaterialTheme.colorScheme.onErrorContainer
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = "Map →",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // STEP 2: Future scheduled time -> Placeholder ("Prediction coming soon")
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Prediction coming soon",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Text(
+                                text = "Auto availability prediction for scheduled trips is coming soon for this route.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Text(
+                                text = "Scheduled: ${uiState.timeSelection.formattedTargetDate} at ${uiState.timeSelection.formattedTargetTime} (${uiState.timeSelection.horizonDescription})",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
                             )
                         }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.QueryBuilder, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (uiState.timeSelection.mode == TimeSelectionMode.FUTURE)
-                            "Check Availability Forecast" else "Check Current Availability",
-                        fontWeight = FontWeight.Bold
-                    )
+                    }
                 }
+            }
 
+            item {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 // WAITING DEMAND STATUS CARD (when active)

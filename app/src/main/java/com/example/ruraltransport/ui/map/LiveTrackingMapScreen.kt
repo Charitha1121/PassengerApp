@@ -72,62 +72,81 @@ import com.google.maps.android.compose.rememberCameraPositionState
 import com.google.maps.android.compose.rememberMarkerState
 import kotlinx.coroutines.launch
 
-/**
- * Calculates the shortest angular difference to prevent spinning across North (0° / 360°).
- */
-internal fun shortestAngleDiff(from: Float, to: Float): Float {
-    if (from.isNaN() || to.isNaN()) return 0f
-    var diff = (to - from) % 360f
-    if (diff > 180f) diff -= 360f
-    if (diff < -180f) diff += 360f
-    return diff
-}
-
-/**
- * Converts a vector drawable resource to a [BitmapDescriptor] suitable for Google Maps markers.
- */
-fun bitmapDescriptorFromVector(context: Context, vectorResId: Int, sizeDp: Int = 44): BitmapDescriptor {
-    val drawable = ContextCompat.getDrawable(context, vectorResId)
-        ?: return BitmapDescriptorFactory.defaultMarker()
-    val density = context.resources.displayMetrics.density
-    val sizePx = (sizeDp * density).toInt().coerceAtLeast(1)
-    val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-    drawable.setBounds(0, 0, canvas.width, canvas.height)
-    drawable.draw(canvas)
-    return BitmapDescriptorFactory.fromBitmap(bitmap)
-}
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Schedule
+import com.example.ruraltransport.ui.ride.ActiveRideViewModel
+import com.example.ruraltransport.ui.ride.RideUiState
 
 /**
  * Live Corridor Tracking Map Screen:
- * Displays active vehicles moving smoothly in real-time along the corridor road,
- * rotating in the direction of travel (heading), just like Rapido/Ola/Uber.
+ * - Browse Mode (Pre-booking): Displays all operating autos on the corridor road using `drivers/{uid}/liveLocation`.
+ * - Tap Marker: Displays driver details, available seats, distance, and straight-line ETA (20 km/h) to passenger pickup.
+ * - Accepted Ride Mode: Switches to tracking the assigned driver via `drivers/{driverId}/liveTracking`.
  */
 @Composable
 fun LiveTrackingMapScreen(
     onBack: () -> Unit,
     journeyViewModel: JourneyViewModel = viewModel(),
     passengerViewModel: PassengerViewModel = viewModel(),
+    activeRideViewModel: ActiveRideViewModel = viewModel(),
     liveTrackingViewModel: LiveTrackingViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val journeyState by journeyViewModel.uiState.collectAsState()
     val activeDrivers by liveTrackingViewModel.activeDrivers.collectAsState()
     val selectedDriver by liveTrackingViewModel.selectedDriver.collectAsState()
+    val rideState by activeRideViewModel.rideState.collectAsState()
+
+    // Ensure Google Maps is initialized early to prevent BitmapDescriptorFactory crashes
+    remember {
+        try {
+            com.google.android.gms.maps.MapsInitializer.initialize(context)
+        } catch (e: Exception) {
+            android.util.Log.e("LiveTrackingMap", "MapsInitializer failed: ${e.message}")
+        }
+        true
+    }
+
+    val assignedRide = when (val s = rideState) {
+        is RideUiState.DriverAssigned -> s.ride
+        is RideUiState.InProgress -> s.ride
+        is RideUiState.Completed -> s.ride
+        else -> null
+    }
 
     val currentRoute = journeyState.selectedRoute ?: com.example.ruraltransport.data.repository.RouteRepository().defaultRoute
     val pickupStopName = journeyState.pickupStop?.name ?: RouteData.stops.first()
     val destStopName = journeyState.destinationStop?.name ?: RouteData.stops.last()
     val direction = RouteData.getDirection(pickupStopName, destStopName)
 
-    // Keep liveTrackingViewModel in sync with selected corridor routeId
-    LaunchedEffect(currentRoute.id) {
-        liveTrackingViewModel.observeDriversForRoute(currentRoute.id)
+    val pickupTransportStop = RouteData.canonicalStops.find { it.name.equals(pickupStopName, true) }
+        ?: RouteData.canonicalStops.first()
+    val pickupLatLng = remember(pickupTransportStop) {
+        val lat = pickupTransportStop.latitude
+        val lng = pickupTransportStop.longitude
+        if (lat.isFinite() && lng.isFinite() && lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0) {
+            LatLng(lat, lng)
+        } else {
+            LatLng(0.0, 0.0)
+        }
     }
 
-    // Cache the custom auto-rickshaw icon
-    val autoIconDescriptor = remember(context) {
-        bitmapDescriptorFromVector(context, R.drawable.ic_auto_rickshaw, 44)
+    // STEP 4: Ungate map from ride acceptance. Always observe all operating autos on corridor via liveLocation.
+    LaunchedEffect(currentRoute.id, direction, pickupLatLng) {
+        liveTrackingViewModel.observeCorridorDrivers(
+            routeId = currentRoute.id,
+            direction = direction,
+            pickupLatLng = pickupLatLng
+        )
+    }
+
+    // Cache the custom auto-rickshaw icon - handle potential null if SDK not ready
+    val autoIconDescriptor by androidx.compose.runtime.produceState<BitmapDescriptor?>(initialValue = null) {
+        value = try {
+            bitmapDescriptorFromVector(context, R.drawable.ic_auto_rickshaw, 44)
+        } catch (e: Exception) {
+            null
+        }
     }
 
     // ========================================================
@@ -173,15 +192,36 @@ fun LiveTrackingMapScreen(
         }
     }
 
-    // Default camera position focused on the corridor's pickup stop or first stop
-    val pickupTransportStop = RouteData.canonicalStops.find { it.name.equals(pickupStopName, true) }
-        ?: RouteData.canonicalStops.first()
-
     val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(
-            LatLng(pickupTransportStop.latitude, pickupTransportStop.longitude),
-            13.8f
-        )
+        val lat = pickupTransportStop.latitude
+        val lng = pickupTransportStop.longitude
+        val validTarget = if (lat.isFinite() && lng.isFinite() && (lat != 0.0 || lng != 0.0)) {
+            LatLng(lat, lng)
+        } else {
+            LatLng(17.2942, 78.5675) // Default fallback
+        }
+        
+        position = CameraPosition.fromLatLngZoom(validTarget, 14.2f)
+    }
+
+    LaunchedEffect(selectedDriver?.driverUid) {
+        selectedDriver?.let { driver ->
+            if (driver.lat.isFinite() && driver.lng.isFinite() && 
+                driver.lat >= -90.0 && driver.lat <= 90.0 && 
+                driver.lng >= -180.0 && driver.lng <= 180.0 &&
+                (driver.lat != 0.0 || driver.lng != 0.0)
+            ) {
+                try {
+                    val update = com.google.android.gms.maps.CameraUpdateFactory.newLatLngZoom(
+                        LatLng(driver.lat, driver.lng),
+                        15.0f
+                    )
+                    cameraPositionState.animate(update)
+                } catch (e: Exception) {
+                    android.util.Log.e("LiveTrackingMap", "Camera animation failed: ${e.message}")
+                }
+            }
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -194,42 +234,60 @@ fun LiveTrackingMapScreen(
         ) {
             // Corridor Fixed Route Line
             Polyline(
-                points = RouteData.canonicalStops.map { LatLng(it.latitude, it.longitude) },
+                points = RouteData.canonicalStops
+                    .filter { it.latitude.isFinite() && it.longitude.isFinite() }
+                    .map { LatLng(it.latitude, it.longitude) },
                 color = Color(0xFF1976D2),
                 width = 12f
             )
 
             // Fixed Corridor Stops
             RouteData.canonicalStops.forEach { stop ->
-                val isPickup = stop.name.equals(pickupStopName, true)
-                val isDest = stop.name.equals(destStopName, true)
+                if (stop.latitude.isFinite() && stop.longitude.isFinite() &&
+                    stop.latitude >= -90.0 && stop.latitude <= 90.0 &&
+                    stop.longitude >= -180.0 && stop.longitude <= 180.0
+                ) {
+                    val isPickup = stop.name.equals(pickupStopName, true)
+                    val isDest = stop.name.equals(destStopName, true)
 
-                val markerTitle = when {
-                    isPickup -> "Pickup: ${stop.name}"
-                    isDest -> "Destination: ${stop.name}"
-                    else -> stop.name
-                }
-                val markerSnippet = when {
-                    isPickup -> "Boarding point (${stop.sequence}/4)"
-                    isDest -> "Drop-off point (${stop.sequence}/4)"
-                    else -> "Corridor stop ${stop.sequence}"
-                }
+                    val markerTitle = when {
+                        isPickup -> "Pickup: ${stop.name}"
+                        isDest -> "Destination: ${stop.name}"
+                        else -> stop.name
+                    }
+                    val markerSnippet = when {
+                        isPickup -> "Boarding point (${stop.sequence}/4)"
+                        isDest -> "Drop-off point (${stop.sequence}/4)"
+                        else -> "Corridor stop ${stop.sequence}"
+                    }
 
-                Marker(
-                    state = rememberMarkerState(position = LatLng(stop.latitude, stop.longitude)),
-                    title = markerTitle,
-                    snippet = markerSnippet
-                )
+                    key("stop_${stop.name}") {
+                        Marker(
+                            state = rememberMarkerState(
+                                position = LatLng(stop.latitude, stop.longitude)
+                            ),
+                            title = markerTitle,
+                            snippet = markerSnippet
+                        )
+                    }
+                }
             }
 
             // User Location Marker
             currentLocation?.let { loc ->
-                Marker(
-                    state = rememberMarkerState(position = loc),
-                    title = "Your Location",
-                    snippet = "GPS Position",
-                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)
-                )
+                if (loc.latitude.isFinite() && loc.longitude.isFinite() &&
+                    loc.latitude >= -90.0 && loc.latitude <= 90.0 &&
+                    loc.longitude >= -180.0 && loc.longitude <= 180.0
+                ) {
+                    key("user_location") {
+                        Marker(
+                            state = rememberMarkerState(position = loc),
+                            title = "Your Location",
+                            snippet = "GPS Position",
+                            icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)
+                        )
+                    }
+                }
             }
 
             // Real-Time Animated Driver Markers
@@ -323,9 +381,45 @@ fun LiveTrackingMapScreen(
             }
 
             // ====================================================
-            // STATUS BANNER: ACTIVE OR EMPTY STATE
+            // STATUS BANNER: ACTIVE, BROWSE, OR EMPTY STATE
             // ====================================================
-            if (activeDrivers.isEmpty()) {
+            if (assignedRide != null) {
+                // Accepted Ride Banner
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DirectionsCar,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                text = "Driver Assigned • On The Way",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                text = "${assignedRide.driverName ?: "Driver"} (${assignedRide.vehicleNumber ?: "Auto"})",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
+            } else if (activeDrivers.isEmpty()) {
                 // Empty State Banner
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -364,7 +458,7 @@ fun LiveTrackingMapScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Live vehicles will appear on this corridor as drivers begin moving.",
+                                text = "Live operating vehicles will appear as drivers broadcast location.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -372,7 +466,7 @@ fun LiveTrackingMapScreen(
                     }
                 }
             } else {
-                // Active Drivers Count Banner
+                // Browse Corridor Drivers Count Banner
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
@@ -394,13 +488,13 @@ fun LiveTrackingMapScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column {
                             Text(
-                                text = "${activeDrivers.size} auto${if (activeDrivers.size > 1) "s" else ""} moving live",
+                                text = "${activeDrivers.size} auto${if (activeDrivers.size > 1) "s" else ""} operating on corridor",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
                             Text(
-                                text = "GPS updates stream in real-time with road rotation & speed",
+                                text = "Tap any auto marker to view available seats & ETA to your stop",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
@@ -458,8 +552,56 @@ fun LiveTrackingMapScreen(
                         }
                     }
 
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Seats & ETA Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Available Seats
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "${driver.availableSeats} seat(s) free",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        // Estimated Arrival Time to Passenger's Pickup Stop
+                        driver.etaMinutesToPickup?.let { eta ->
+                            val distStr = driver.distanceKmToPickup?.let {
+                                String.format(java.util.Locale.US, " (%.1f km)", it)
+                            } ?: ""
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = null,
+                                    tint = Color(0xFF2E7D32),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (eta <= 1) "Arriving now$distStr" else "~$eta min away$distStr",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF2E7D32)
+                                )
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(10.dp))
 
+                    // Speed & Freshness Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -501,79 +643,4 @@ fun LiveTrackingMapScreen(
     }
 }
 
-/**
- * Animated Google Maps marker for an active driver:
- * - Interpolates LatLng continuously over ~3.5 seconds with [LinearEasing] to smoothly glide between GPS updates.
- * - Interpolates heading rotation with shortest angular distance to prevent 360° spin flips.
- * - Uses [anchor] (0.5, 0.5) so rotation centers on the vehicle roof.
- * - Uses [flat] = true so the icon lays on the map plane.
- */
-@Composable
-fun AnimatedAutoMarker(
-    driver: LiveDriverPosition,
-    autoIcon: BitmapDescriptor?,
-    onClick: (LiveDriverPosition) -> Unit
-) {
-    // Initial coordinates snap immediately to prevent flying from (0, 0)
-    val initialLat = if (driver.lat.isFinite()) driver.lat.toFloat() else 0f
-    val initialLng = if (driver.lng.isFinite()) driver.lng.toFloat() else 0f
-    val initialHeading = if (driver.heading.isFinite()) driver.heading else 0f
 
-    val animLat = remember(driver.driverUid) { Animatable(initialLat) }
-    val animLng = remember(driver.driverUid) { Animatable(initialLng) }
-    val animHeading = remember(driver.driverUid) { Animatable(initialHeading) }
-
-    // Smooth position glide between updates (typical driver GPS interval ~3-4s)
-    LaunchedEffect(driver.lat, driver.lng) {
-        if (driver.lat.isFinite() && driver.lng.isFinite()) {
-            launch {
-                animLat.animateTo(
-                    targetValue = driver.lat.toFloat(),
-                    animationSpec = tween(durationMillis = 3500, easing = LinearEasing)
-                )
-            }
-            launch {
-                animLng.animateTo(
-                    targetValue = driver.lng.toFloat(),
-                    animationSpec = tween(durationMillis = 3500, easing = LinearEasing)
-                )
-            }
-        }
-    }
-
-    // Smooth heading rotation with shortest angle difference
-    LaunchedEffect(driver.heading) {
-        if (driver.heading.isFinite()) {
-            val diff = shortestAngleDiff(animHeading.value, driver.heading)
-            animHeading.animateTo(
-                targetValue = animHeading.value + diff,
-                animationSpec = tween(durationMillis = 600, easing = LinearEasing)
-            )
-        }
-    }
-
-    val currentLat = if (animLat.value.isFinite()) animLat.value.toDouble() else 0.0
-    val currentLng = if (animLng.value.isFinite()) animLng.value.toDouble() else 0.0
-    val currentPosition = LatLng(currentLat, currentLng)
-    val markerState = rememberMarkerState(key = driver.driverUid, position = currentPosition)
-    LaunchedEffect(animLat.value, animLng.value) {
-        markerState.position = currentPosition
-    }
-
-    val speedKmh = (driver.speed * 3.6f).toInt()
-    val speedSnippet = if (speedKmh > 0) "$speedKmh km/h • On the move" else "Active ride"
-
-    Marker(
-        state = markerState,
-        title = driver.vehicleNumber.ifBlank { "Auto #${driver.driverUid.takeLast(4).uppercase()}" },
-        snippet = "${driver.driverName} • $speedSnippet",
-        icon = autoIcon,
-        rotation = animHeading.value,
-        anchor = Offset(0.5f, 0.5f),
-        flat = true,
-        onClick = {
-            onClick(driver)
-            false
-        }
-    )
-}

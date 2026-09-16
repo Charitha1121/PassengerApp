@@ -63,18 +63,42 @@ import com.google.maps.android.compose.rememberMarkerState
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import com.example.ruraltransport.ui.notifications.NotificationHelper
+import com.example.ruraltransport.ui.map.LiveTrackingViewModel
+import com.example.ruraltransport.ui.map.AnimatedAutoMarker
+import com.example.ruraltransport.ui.map.bitmapDescriptorFromVector
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ruraltransport.data.model.LiveDriverPosition
+import com.example.ruraltransport.data.model.RouteData
+import com.example.ruraltransport.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ActiveRideScreen(
     activeRideViewModel: ActiveRideViewModel,
+    liveTrackingViewModel: LiveTrackingViewModel = viewModel(),
     routeStops: List<TransportStop>,
     onBackToHome: () -> Unit
 ) {
     val rideState by activeRideViewModel.rideState.collectAsState()
+    val activeDrivers by liveTrackingViewModel.activeDrivers.collectAsState()
     val context = LocalContext.current
     val notificationHelper = remember { NotificationHelper(context) }
+
+    // Ensure Google Maps is initialized
+    LaunchedEffect(Unit) {
+        try {
+            com.google.android.gms.maps.MapsInitializer.initialize(context)
+        } catch (e: Exception) {
+            android.util.Log.e("ActiveRideMap", "MapsInitializer failed: ${e.message}")
+        }
+    }
+
+    // Observe all corridor drivers continuously
+    LaunchedEffect(Unit) {
+        liveTrackingViewModel.observeCorridorDrivers()
+    }
 
     LaunchedEffect(rideState) {
         when (val s = rideState) {
@@ -156,7 +180,8 @@ fun ActiveRideScreen(
                 is RideUiState.DriverAssigned -> {
                     ActiveRideLiveView(
                         ride = state.ride,
-                        driverLocation = state.driverLocation,
+                        assignedDriverLocation = state.driverLocation,
+                        activeDrivers = activeDrivers,
                         statusTitle = "Driver Assigned • On The Way",
                         statusColor = Color(0xFF2E7D32),
                         routeStops = routeStops,
@@ -167,7 +192,8 @@ fun ActiveRideScreen(
                 is RideUiState.InProgress -> {
                     ActiveRideLiveView(
                         ride = state.ride,
-                        driverLocation = state.driverLocation,
+                        assignedDriverLocation = state.driverLocation,
+                        activeDrivers = activeDrivers,
                         statusTitle = "Ride In Progress • En Route",
                         statusColor = MaterialTheme.colorScheme.primary,
                         routeStops = routeStops,
@@ -279,16 +305,24 @@ private fun SearchingView(
 @Composable
 private fun ActiveRideLiveView(
     ride: RideRequest,
-    driverLocation: DriverLocationUpdate?,
+    assignedDriverLocation: DriverLocationUpdate?,
+    activeDrivers: List<LiveDriverPosition>,
     statusTitle: String,
     statusColor: Color,
     routeStops: List<TransportStop>,
     onCancel: (() -> Unit)?
 ) {
-    val initialPos = LatLng(
-        routeStops.firstOrNull()?.latitude ?: 16.5062,
-        routeStops.firstOrNull()?.longitude ?: 80.6480
-    )
+    val context = LocalContext.current
+    val autoIconDescriptor = remember(context) {
+        bitmapDescriptorFromVector(context, R.drawable.ic_auto_rickshaw, 44)
+    }
+
+    val firstStop = routeStops.firstOrNull()
+    val initialPos = if (firstStop != null && firstStop.latitude.isFinite() && firstStop.longitude.isFinite()) {
+        LatLng(firstStop.latitude, firstStop.longitude)
+    } else {
+        LatLng(17.2820, 78.5538)
+    }
 
     val cameraPositionState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(initialPos, 14f)
@@ -323,7 +357,7 @@ private fun ActiveRideLiveView(
         }
 
         // Stale Location Notice if needed
-        if (driverLocation != null && driverLocation.isStale) {
+        if (assignedDriverLocation != null && assignedDriverLocation.isStale) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -339,7 +373,7 @@ private fun ActiveRideLiveView(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Driver GPS signal paused (${driverLocation.ageSeconds}s ago)",
+                        text = "Driver GPS signal paused (${assignedDriverLocation.ageSeconds}s ago)",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFFE65100)
                     )
@@ -359,28 +393,60 @@ private fun ActiveRideLiveView(
             ) {
                 // Route Polyline
                 Polyline(
-                    points = routeStops.map { LatLng(it.latitude, it.longitude) },
+                    points = routeStops
+                        .filter { it.latitude.isFinite() && it.longitude.isFinite() }
+                        .map { LatLng(it.latitude, it.longitude) },
                     width = 8f,
                     color = MaterialTheme.colorScheme.primary
                 )
 
                 // Stops Markers
                 routeStops.forEach { stop ->
-                    Marker(
-                        state = rememberMarkerState(position = LatLng(stop.latitude, stop.longitude)),
-                        title = stop.name,
-                        snippet = "Stop ${stop.sequence}"
-                    )
+                    if (stop.latitude.isFinite() && stop.longitude.isFinite()) {
+                        Marker(
+                            state = rememberMarkerState(
+                                key = "stop_${stop.id}",
+                                position = LatLng(stop.latitude, stop.longitude)
+                            ),
+                            title = stop.name,
+                            snippet = "Stop ${stop.sequence}"
+                        )
+                    }
                 }
 
-                // Live Driver Marker
-                driverLocation?.let { loc ->
-                    if (loc.latitude != 0.0 && loc.longitude != 0.0) {
-                        Marker(
-                            state = rememberMarkerState(position = LatLng(loc.latitude, loc.longitude)),
-                            title = "${ride.driverName ?: "Driver"} (${ride.vehicleNumber ?: "Auto"})",
-                            snippet = "Live Position"
+                // All Real-Time Animated Driver Markers on the corridor (excluding assigned driver)
+                activeDrivers.forEach { driver ->
+                    if (driver.driverUid != ride.driverId && driver.lat.isFinite() && driver.lng.isFinite() && (driver.lat != 0.0 || driver.lng != 0.0)) {
+                        key(driver.driverUid) {
+                            AnimatedAutoMarker(
+                                driver = driver,
+                                autoIcon = autoIconDescriptor
+                            )
+                        }
+                    }
+                }
+
+                // Assigned Driver Marker (High-precision tracking)
+                assignedDriverLocation?.let { loc ->
+                    if (loc.latitude.isFinite() && loc.longitude.isFinite() && (loc.latitude != 0.0 || loc.longitude != 0.0)) {
+                        val assignedDriverPos = LiveDriverPosition(
+                            driverUid = ride.driverId ?: "assigned",
+                            lat = loc.latitude,
+                            lng = loc.longitude,
+                            heading = loc.bearing,
+                            speed = loc.speed,
+                            isRideActive = true,
+                            isAvailable = false,
+                            lastUpdated = loc.timestamp,
+                            driverName = ride.driverName ?: "Your Auto",
+                            vehicleNumber = ride.vehicleNumber ?: "Auto"
                         )
+                        key("assigned_driver") {
+                            AnimatedAutoMarker(
+                                driver = assignedDriverPos,
+                                autoIcon = autoIconDescriptor
+                            )
+                        }
                     }
                 }
             }
