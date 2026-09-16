@@ -1,5 +1,6 @@
 package com.example.ruraltransport
 
+import com.example.ruraltransport.data.model.RouteData
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
@@ -49,6 +50,22 @@ class FirebaseRepository {
             .child(demandId)
             .setValue(demandData)
             .addOnSuccessListener {
+                // Bug 1 Fix: Also maintain passenger_demand/{routeId}/{direction}/{stopName} hierarchy
+                val routeId = RouteData.DEFAULT_ROUTE_ID
+                val direction = "FORWARD"
+                val stopRef = database.child("passenger_demand").child(routeId).child(direction).child(stopName)
+                if (passengerId.isNotBlank()) {
+                    stopRef.child("waitingPassengers").child(passengerId).setValue(
+                        mapOf(
+                            "destinationStop" to RouteData.stops.last(),
+                            "timestamp" to com.google.firebase.database.ServerValue.TIMESTAMP
+                        )
+                    )
+                }
+                stopRef.child("waitingPassengers").get().addOnSuccessListener { snap ->
+                    val count = snap.childrenCount.toInt().coerceAtLeast(1)
+                    stopRef.child("waitingCount").setValue(count)
+                }
                 onSuccess()
             }
             .addOnFailureListener { exception ->
@@ -100,7 +117,7 @@ class FirebaseRepository {
     }
 
     // ============================================================
-    // UPDATE AUTO STATUS (Legacy Driver compatibility)
+    // UPDATE AUTO STATUS & LIVE DRIVER DATA
     // ============================================================
 
     fun updateAutoStatus(
@@ -108,23 +125,49 @@ class FirebaseRepository {
         currentStop: String,
         availableSeats: Int,
         status: String,
+        direction: String = "FORWARD",
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
+        val isOnline = status.uppercase() != "OFFLINE"
+        val timestamp = System.currentTimeMillis()
+
+        // 1. Update legacy auto_status node
         val autoData = mapOf(
             "autoId" to autoId,
             "currentStop" to currentStop,
             "availableSeats" to availableSeats,
             "status" to status,
-            "timestamp" to System.currentTimeMillis()
+            "timestamp" to timestamp
         )
 
-        database
-            .child("auto_status")
-            .child(autoId)
-            .setValue(autoData)
+        // 2. Update new drivers node (for map visibility)
+        val stopIdx = RouteData.indexOf(currentStop)
+        val stop = if (stopIdx >= 0) RouteData.canonicalStops[stopIdx] else null
+
+        val driverData = mapOf(
+            "isOnline" to isOnline,
+            "routeId" to RouteData.DEFAULT_ROUTE_ID,
+            "activeDirection" to direction,
+            "currentStop" to currentStop,
+            "name" to "Auto Driver $autoId",
+            "phone" to "9876543210",
+            "vehicleNumber" to autoId,
+            "availableSeats" to availableSeats,
+            "liveLocation" to mapOf(
+                "latitude" to (stop?.latitude ?: 0.0),
+                "longitude" to (stop?.longitude ?: 0.0),
+                "heading" to 0.0,
+                "speed" to 0.0,
+                "timestamp" to timestamp
+            )
+        )
+
+        database.child("auto_status").child(autoId).setValue(autoData)
             .addOnSuccessListener {
-                onSuccess()
+                database.child("drivers").child(autoId).setValue(driverData)
+                    .addOnSuccessListener { onSuccess() }
+                    .addOnFailureListener { onError(it.message ?: "Failed to update drivers node") }
             }
             .addOnFailureListener { exception ->
                 onError(exception.message ?: "Failed to update auto status")

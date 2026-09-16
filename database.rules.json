@@ -34,10 +34,25 @@
       ".write": "auth != null && auth.token.admin == true"
     },
     "passenger_demand": {
-      "$demandId": {
+      ".read": "auth != null",
+      "$routeOrDemandId": {
         ".read": "auth != null",
-        ".write": "auth != null && (!data.exists() || data.child('passengerId').val() == auth.uid)",
-        ".validate": "newData.hasChildren(['passengerId', 'stopId', 'requestedSeats', 'status'])"
+        ".write": "auth != null",
+        "$direction": {
+          ".read": "auth != null",
+          ".write": "auth != null",
+          "$pickupStop": {
+            ".read": "auth != null",
+            ".write": "auth != null",
+            "waitingPassengers": {
+              ".read": "auth != null",
+              "$passengerUid": {
+                ".read": "auth != null",
+                ".write": "auth != null && (auth.uid == $passengerUid || !newData.exists())"
+              }
+            }
+          }
+        }
       }
     },
     "rideRequests": {

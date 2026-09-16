@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -58,6 +59,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.ruraltransport.data.model.AvailabilityForecast
 import com.example.ruraltransport.data.model.ForecastPoint
+import com.google.firebase.auth.FirebaseAuth
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -66,8 +68,9 @@ import java.util.Locale
 @Composable
 fun ForecastScreen(
     forecastViewModel: ForecastViewModel,
+    passengerViewModel: com.example.ruraltransport.ui.home.PassengerViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
     onBack: () -> Unit,
-    onWaitingHere: (stopId: String, stopName: String) -> Unit,
+    onWaitingHere: (stopId: String, stopName: String) -> Unit = { _, _ -> },
     onRequestRide: (forecast: AvailabilityForecast) -> Unit = {}
 ) {
     val uiState by forecastViewModel.uiState.collectAsState()
@@ -144,6 +147,7 @@ fun ForecastScreen(
                 is ForecastUiState.Success -> {
                     ForecastContent(
                         forecast = state.forecast,
+                        passengerViewModel = passengerViewModel,
                         onWaitingHere = onWaitingHere,
                         onRequestRide = onRequestRide,
                         onBack = onBack
@@ -157,6 +161,7 @@ fun ForecastScreen(
 @Composable
 private fun ForecastContent(
     forecast: AvailabilityForecast,
+    passengerViewModel: com.example.ruraltransport.ui.home.PassengerViewModel,
     onWaitingHere: (stopId: String, stopName: String) -> Unit,
     onRequestRide: (forecast: AvailabilityForecast) -> Unit,
     onBack: () -> Unit
@@ -164,6 +169,8 @@ private fun ForecastContent(
     val targetDateSdf = SimpleDateFormat("EEE, dd MMM", Locale.getDefault())
     val targetTimeSdf = SimpleDateFormat("hh:mm a", Locale.getDefault())
     val queryTimeSdf = SimpleDateFormat("hh:mm a", Locale.getDefault())
+
+    val waitingState by passengerViewModel.waitingState.collectAsState()
 
     val formattedTargetDate = targetDateSdf.format(Date(forecast.targetEpochMillis))
     val formattedTargetTime = targetTimeSdf.format(Date(forecast.targetEpochMillis))
@@ -511,8 +518,12 @@ private fun ForecastContent(
 
         // Action Buttons
         item {
+            val currentUser = FirebaseAuth.getInstance().currentUser
+            val isAuthReady = currentUser != null
+
             Button(
-                onClick = { onRequestRide(forecast) },
+                onClick = { if (isAuthReady) onRequestRide(forecast) },
+                enabled = isAuthReady,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
@@ -520,23 +531,87 @@ private fun ForecastContent(
             ) {
                 Icon(Icons.Default.DirectionsCar, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Request Auto Now", fontWeight = FontWeight.Bold)
+                Text(
+                    text = if (isAuthReady) "Request Auto Now" else "Signing In...",
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            if (!isAuthReady) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Please ensure you are signed in to request a ride.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            OutlinedButton(
-                onClick = {
-                    onWaitingHere(forecast.pickupStopId, forecast.pickupStopName)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(Icons.Default.LocationOn, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("I'm Waiting Here", fontWeight = FontWeight.Bold)
+            val isCurrentlyWaitingHere = waitingState.isWaiting &&
+                (waitingState.pickupStop.equals(forecast.pickupStopName, ignoreCase = true) ||
+                 waitingState.pickupStop.equals(forecast.pickupStopId, ignoreCase = true))
+
+            if (isCurrentlyWaitingHere) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF2E7D32)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "You are waiting here (${waitingState.waitingPassengersCount} total in queue)",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(
+                    onClick = {
+                        passengerViewModel.stopWaiting()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Cancel Wait", fontWeight = FontWeight.Bold)
+                }
+            } else {
+                OutlinedButton(
+                    onClick = {
+                        passengerViewModel.startWaiting(
+                            pickupStop = forecast.pickupStopName,
+                            destinationStop = forecast.destStopName,
+                            routeId = forecast.routeId
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.LocationOn, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("I'm Waiting Here", fontWeight = FontWeight.Bold)
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))

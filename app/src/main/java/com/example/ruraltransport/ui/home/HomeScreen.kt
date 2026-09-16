@@ -37,6 +37,8 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -45,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,8 +58,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.ruraltransport.data.model.JourneyTimeSelection
 import com.example.ruraltransport.data.model.JourneyValidationResult
+import com.example.ruraltransport.data.model.RouteData
 import com.example.ruraltransport.data.model.TimeSelectionMode
 import com.example.ruraltransport.data.model.TransportStop
 import com.google.firebase.auth.FirebaseAuth
@@ -65,13 +70,33 @@ import com.google.firebase.auth.FirebaseAuth
 @Composable
 fun HomeScreen(
     journeyViewModel: JourneyViewModel,
+    passengerViewModel: PassengerViewModel = viewModel(),
     onNavigateToProfile: () -> Unit,
     onNavigateToForecast: (routeId: String, pickupId: String, destId: String, targetEpochMillis: Long, queryEpochMillis: Long) -> Unit,
-    onReportWaiting: (stop: TransportStop) -> Unit,
+    onReportWaiting: (stop: TransportStop) -> Unit = {},
     onNavigateToMap: () -> Unit
 ) {
     val uiState by journeyViewModel.uiState.collectAsState()
+    val waitingState by passengerViewModel.waitingState.collectAsState()
     var showTimePicker by remember { mutableStateOf(false) }
+
+    // Clean up waiting request if navigating away from the waiting screen
+    DisposableEffect(Unit) {
+        onDispose {
+            if (waitingState.isWaiting) {
+                passengerViewModel.stopWaiting()
+            }
+        }
+    }
+
+    // Automatically update waiting journey if passenger changes pickup/destination while waiting
+    val pickupName = uiState.pickupStop?.name ?: ""
+    val destName = uiState.destinationStop?.name ?: ""
+    androidx.compose.runtime.LaunchedEffect(pickupName, destName) {
+        if (waitingState.isWaiting && pickupName.isNotBlank() && destName.isNotBlank()) {
+            passengerViewModel.updateWaitingJourneyIfChanged(pickupName, destName)
+        }
+    }
 
     val currentUser = FirebaseAuth.getInstance().currentUser
     val displayName = currentUser?.displayName?.ifBlank { null }
@@ -398,22 +423,186 @@ fun HomeScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                OutlinedButton(
-                    onClick = {
-                        uiState.pickupStop?.let { stop ->
-                            onReportWaiting(stop)
+                // WAITING DEMAND STATUS CARD (when active)
+                if (waitingState.isWaiting) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(10.dp)
+                                            .clip(CircleShape)
+                                            .background(androidx.compose.ui.graphics.Color(0xFF2E7D32))
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "WAITING ACTIVE",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+
+                                Text(
+                                    text = "${waitingState.direction.name} Corridor",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Text(
+                                text = "Waiting at ${waitingState.pickupStop}",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            Text(
+                                text = "${waitingState.pickupStop} → ${waitingState.destinationStop}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Card(
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surface
+                                    )
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(8.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(
+                                            text = "${waitingState.waitingPassengersCount}",
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = "Waiting here",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                Card(
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surface
+                                    )
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(8.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        Text(
+                                            text = "${waitingState.approachingDriversCount}",
+                                            style = MaterialTheme.typography.titleLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (waitingState.approachingDriversCount > 0)
+                                                MaterialTheme.colorScheme.primary
+                                            else
+                                                MaterialTheme.colorScheme.error
+                                        )
+                                        Text(
+                                            text = "Autos en route",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
+                            Text(
+                                text = "Only drivers travelling ${waitingState.direction.name} at or before your stop will see your waiting demand.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(50.dp),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Default.LocationOn, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("I'm Waiting Here", fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
+                if (waitingState.error != null) {
+                    Text(
+                        text = waitingState.error ?: "",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+
+                // WAITING TOGGLE BUTTON
+                if (!waitingState.isWaiting) {
+                    OutlinedButton(
+                        onClick = {
+                            if (journeyViewModel.validate()) {
+                                val pickup = uiState.pickupStop?.name ?: ""
+                                val dest = uiState.destinationStop?.name ?: ""
+                                val routeId = uiState.selectedRoute?.id ?: RouteData.DEFAULT_ROUTE_ID
+                                if (pickup.isNotBlank() && dest.isNotBlank()) {
+                                    passengerViewModel.startWaiting(pickup, dest, routeId)
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        if (waitingState.isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(Icons.Default.LocationOn, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("I'm Waiting Here", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            passengerViewModel.stopWaiting()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("Cancel Wait", fontWeight = FontWeight.Bold)
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))

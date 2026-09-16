@@ -27,9 +27,11 @@ class ForecastRepository(
         targetEpochMillis: Long,
         queryEpochMillis: Long = System.currentTimeMillis()
     ): AvailabilityForecast {
-        // 1. Fetch real-time corridor driver availability
+        // 1. Fetch real-time corridor driver availability & waiting demand
         val activeDriverCount = fetchCorridorActiveDrivers()
         val activeAvailableSeats = fetchCorridorAvailableSeats()
+        val direction = com.example.ruraltransport.data.model.RouteData.getDirection(pickupStopName, destStopName)
+        val waitingCount = fetchPickupStopWaitingCount(routeId, direction.name, pickupStopName)
 
         // 2. Target Time Analysis
         val targetCal = Calendar.getInstance().apply { timeInMillis = targetEpochMillis }
@@ -43,7 +45,7 @@ class ForecastRepository(
         // 3. Compute base probability from rural network time-of-day model
         val baseMetrics = computeTimeOfDayPrior(targetHour, targetMinute, targetDayOfWeek)
 
-        // 4. Adjust with real-time driver density
+        // 4. Adjust with real-time driver density and passenger waiting queue
         val realTimeAdjustment = when {
             activeDriverCount >= 3 -> 10
             activeDriverCount in 1..2 -> 5
@@ -62,17 +64,20 @@ class ForecastRepository(
         val rawProbability = (baseMetrics.probability + realTimeAdjustment).coerceIn(25, 96)
         val finalProbability = rawProbability.coerceIn(10, 98)
 
-        // Expected Autos calculation
+        // Expected Autos calculation (additional autos attracted if high passenger queue)
         val autoMin = max(1, (baseMetrics.expectedAutos * 0.8).roundToInt())
-        val autoMax = max(autoMin + 1, (baseMetrics.expectedAutos * 1.25).roundToInt() + if (activeDriverCount > 2) 1 else 0)
+        val autoMax = max(autoMin + 1, (baseMetrics.expectedAutos * 1.25).roundToInt() + if (activeDriverCount > 2) 1 else 0 + if (waitingCount >= 3) 1 else 0)
 
-        // Expected Seats calculation (assuming 3–4 seats per shared auto)
-        val seatsMin = max(2, autoMin * 2)
-        val seatsMax = max(seatsMin + 2, autoMax * 3)
+        // Expected Seats calculation (adjusting for passengers already in line)
+        val baseSeatsMin = max(2, autoMin * 2)
+        val baseSeatsMax = max(baseSeatsMin + 2, autoMax * 3)
+        val seatsMin = max(1, baseSeatsMin - (waitingCount / 2))
+        val seatsMax = max(seatsMin + 1, baseSeatsMax - waitingCount)
 
-        // Waiting Time calculation
-        val waitMin = baseMetrics.expectedWaitMin.coerceAtLeast(3)
-        val waitMax = (baseMetrics.expectedWaitMax + if (horizonMinutes > 180) 2 else 0).coerceAtLeast(waitMin + 2)
+        // Waiting Time calculation (board queue adjustment if people already waiting)
+        val queueDelay = if (waitingCount >= 3) 2 else 0
+        val waitMin = (baseMetrics.expectedWaitMin + queueDelay).coerceAtLeast(3)
+        val waitMax = (baseMetrics.expectedWaitMax + queueDelay + if (horizonMinutes > 180) 2 else 0).coerceAtLeast(waitMin + 2)
 
         // Confidence calculation
         val confidencePercent = (baseMetrics.baseConfidence * horizonConfidenceFactor).roundToInt().coerceIn(40, 95)
@@ -98,6 +103,10 @@ class ForecastRepository(
             explanations.add("ℹ Moderate afternoon rural transit schedule")
         } else {
             explanations.add("ℹ Evening / off-peak transit frequency applies")
+        }
+
+        if (waitingCount > 0) {
+            explanations.add("ℹ Real-time demand: $waitingCount passenger(s) currently waiting at $pickupStopName for ${direction.name} corridor")
         }
 
         if (activeDriverCount > 0) {
@@ -216,6 +225,26 @@ class ForecastRepository(
             totalSeats
         } catch (e: Exception) {
             4
+        }
+    }
+
+    private suspend fun fetchPickupStopWaitingCount(
+        routeId: String,
+        direction: String,
+        pickupStop: String
+    ): Int {
+        return try {
+            val snapshot = database.reference
+                .child("passenger_demand")
+                .child(routeId)
+                .child(direction)
+                .child(pickupStop)
+                .child("waitingPassengers")
+                .get()
+                .await()
+            snapshot.childrenCount.toInt()
+        } catch (e: Exception) {
+            0
         }
     }
 

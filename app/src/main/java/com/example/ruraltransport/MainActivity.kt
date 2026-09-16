@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -70,13 +71,35 @@ import com.example.ruraltransport.ui.navigation.AppNavigation
 import com.google.firebase.auth.FirebaseAuth
 
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.key
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import com.example.ruraltransport.data.model.LiveDriverUiModel
+import com.example.ruraltransport.data.model.RouteData
+import com.example.ruraltransport.data.model.RouteDirection
+import com.example.ruraltransport.ui.home.PassengerViewModel
 import com.example.ruraltransport.data.model.TransportStop
+import com.example.ruraltransport.data.repository.RouteRepository
 import com.example.ruraltransport.ui.home.HomeScreen
 import com.example.ruraltransport.ui.home.JourneyViewModel
 import com.example.ruraltransport.ui.forecast.ForecastScreen
 import com.example.ruraltransport.ui.forecast.ForecastViewModel
 import com.example.ruraltransport.ui.ride.ActiveRideScreen
 import com.example.ruraltransport.ui.ride.ActiveRideViewModel
+import com.example.ruraltransport.ui.map.LiveTrackingMapScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 // ============================================================
@@ -216,15 +239,24 @@ class MainActivity : ComponentActivity() {
 
             RuralTransportTheme {
 
+                val journeyViewModel: JourneyViewModel = viewModel()
+                val passengerViewModel: PassengerViewModel = viewModel()
+
                 AppNavigation(
                     homeContent = { onNavigateToProfile, onNavigateToMap ->
                         RuralTransportApp(
                             onNavigateToProfile = onNavigateToProfile,
-                            onOpenMap = onNavigateToMap
+                            onOpenMap = onNavigateToMap,
+                            journeyViewModel = journeyViewModel,
+                            passengerViewModel = passengerViewModel
                         )
                     },
                     mapContent = { onBack ->
-                        RuralTransportMap(onBack = onBack)
+                        LiveTrackingMapScreen(
+                            journeyViewModel = journeyViewModel,
+                            passengerViewModel = passengerViewModel,
+                            onBack = onBack
+                        )
                     }
                 )
             }
@@ -258,7 +290,8 @@ fun RuralTransportApp(
     onOpenMap: () -> Unit = {},
     journeyViewModel: JourneyViewModel = viewModel(),
     forecastViewModel: ForecastViewModel = viewModel(),
-    activeRideViewModel: ActiveRideViewModel = viewModel()
+    activeRideViewModel: ActiveRideViewModel = viewModel(),
+    passengerViewModel: com.example.ruraltransport.ui.home.PassengerViewModel = viewModel()
 ) {
 
     var currentScreen by remember {
@@ -300,6 +333,7 @@ fun RuralTransportApp(
 
             HomeScreen(
                 journeyViewModel = journeyViewModel,
+                passengerViewModel = passengerViewModel,
                 onNavigateToProfile = onNavigateToProfile,
                 onNavigateToForecast = { routeId, pickupId, destId, targetEpochMillis, queryEpochMillis ->
                     val foundPickup = ruralRoute.find { it.id == pickupId } ?: ruralRoute.first()
@@ -318,10 +352,8 @@ fun RuralTransportApp(
                     currentScreen = AppScreen.AVAILABILITY
                 },
                 onReportWaiting = { stop ->
-                    selectedStop = stop
-                    hasReportedWaiting = false
-                    firebaseError = null
-                    currentScreen = AppScreen.DEMAND
+                    val dest = journeyViewModel.uiState.value.destinationStop?.name ?: com.example.ruraltransport.data.model.RouteData.stops.last()
+                    passengerViewModel.startWaiting(stop.name, dest)
                 },
                 onNavigateToMap = onOpenMap
             )
@@ -433,15 +465,13 @@ fun RuralTransportApp(
 
             ForecastScreen(
                 forecastViewModel = forecastViewModel,
+                passengerViewModel = passengerViewModel,
                 onBack = {
                     currentScreen = AppScreen.HOME
                 },
                 onWaitingHere = { stopId, stopName ->
-                    val stop = ruralRoute.find { it.id == stopId } ?: ruralRoute.first()
-                    selectedStop = stop
-                    hasReportedWaiting = false
-                    firebaseError = null
-                    currentScreen = AppScreen.DEMAND
+                    val dest = journeyViewModel.uiState.value.destinationStop?.name ?: com.example.ruraltransport.data.model.RouteData.stops.last()
+                    passengerViewModel.startWaiting(stopName, dest)
                 },
                 onRequestRide = { forecast ->
                     val currentUser = FirebaseAuth.getInstance().currentUser
@@ -487,11 +517,10 @@ fun RuralTransportApp(
         AppScreen.MAP -> {
 
             RuralTransportMap(
-
+                journeyViewModel = journeyViewModel,
+                passengerViewModel = passengerViewModel,
                 onBack = {
-
-                    currentScreen =
-                        AppScreen.HOME
+                    currentScreen = AppScreen.HOME
                 }
             )
         }
@@ -859,6 +888,11 @@ fun DriverStatusScreen(
     }
 
 
+    var selectedDirection by remember {
+        mutableStateOf("FORWARD")
+    }
+
+
     var message by remember {
 
         mutableStateOf<String?>(null)
@@ -1183,6 +1217,33 @@ fun DriverStatusScreen(
 
 
         // ====================================================
+        // DIRECTION
+        // ====================================================
+
+        Text(
+            text = "Corridor Direction",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf("FORWARD", "REVERSE").forEach { direction ->
+                if (selectedDirection == direction) {
+                    Button(onClick = { selectedDirection = direction }) {
+                        Text(direction)
+                    }
+                } else {
+                    OutlinedButton(onClick = { selectedDirection = direction }) {
+                        Text(direction)
+                    }
+                }
+            }
+        }
+
+
+        // ====================================================
         // FIREBASE UPDATE
         // ====================================================
 
@@ -1215,6 +1276,9 @@ fun DriverStatusScreen(
 
                     status =
                         selectedStatus,
+
+                    direction =
+                        selectedDirection,
 
                     onSuccess = {
 
@@ -1925,454 +1989,487 @@ fun AvailabilityScreen(
 // ============================================================
 
 @Composable
-fun RuralTransportMap(
-
-    onBack: () -> Unit
-
+fun AnimatedDriverMarker(
+    driver: LiveDriverUiModel,
+    passengerPickupStop: String,
+    direction: RouteDirection,
+    onMarkerClick: (LiveDriverUiModel) -> Unit
 ) {
+    val animLat by animateFloatAsState(
+        targetValue = driver.position.latitude.toFloat(),
+        animationSpec = tween(durationMillis = 1000, easing = LinearEasing),
+        label = "driverLat"
+    )
+    val animLng by animateFloatAsState(
+        targetValue = driver.position.longitude.toFloat(),
+        animationSpec = tween(durationMillis = 1000, easing = LinearEasing),
+        label = "driverLng"
+    )
+    val animRotation by animateFloatAsState(
+        targetValue = driver.heading,
+        animationSpec = tween(durationMillis = 500, easing = LinearEasing),
+        label = "driverHeading"
+    )
 
-    val context =
-        LocalContext.current
+    val currentPosition = LatLng(animLat.toDouble(), animLng.toDouble())
+    val markerState = rememberMarkerState(position = currentPosition)
+    LaunchedEffect(animLat, animLng) {
+        markerState.position = currentPosition
+    }
 
+    val stopsText = if (driver.isAtPassengerStop) {
+        "At your pickup stop (${driver.currentStop})"
+    } else {
+        "${driver.stopsAway} stop${if (driver.stopsAway > 1) "s" else ""} away • At ${driver.currentStop}"
+    }
+
+    Marker(
+        state = markerState,
+        title = driver.vehicleNumber.ifBlank { "Auto #${driver.driverId.takeLast(4).uppercase()}" },
+        snippet = "$stopsText • ${driver.availableSeats} seats",
+        rotation = animRotation,
+        onClick = {
+            onMarkerClick(driver)
+            false
+        }
+    )
+}
+
+@Composable
+fun RuralTransportMap(
+    journeyViewModel: JourneyViewModel = viewModel(),
+    passengerViewModel: PassengerViewModel = viewModel(),
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val journeyState by journeyViewModel.uiState.collectAsState()
+    val waitingState by passengerViewModel.waitingState.collectAsState()
+    val liveDrivers by passengerViewModel.liveDrivers.collectAsState()
+
+    val route = journeyState.selectedRoute ?: RouteRepository().defaultRoute
+    val pickupStop = journeyState.pickupStop?.name ?: RouteData.stops.first()
+    val destStop = journeyState.destinationStop?.name ?: RouteData.stops.last()
+    val direction = RouteData.getDirection(pickupStop, destStop)
+
+    var selectedDriver by remember { mutableStateOf<LiveDriverUiModel?>(null) }
+
+    // Start live listener for corridor drivers matching route, direction, and pickup stop
+    LaunchedEffect(route.id, direction, pickupStop) {
+        passengerViewModel.observeDriversOnCorridor(
+            routeId = route.id,
+            direction = direction,
+            pickupStop = pickupStop
+        )
+    }
 
     // ========================================================
     // LOCATION PERMISSION
     // ========================================================
-
     var hasLocationPermission by remember {
-
         mutableStateOf(
-
             ContextCompat.checkSelfPermission(
-
                 context,
-
                 Manifest.permission.ACCESS_FINE_LOCATION
-
+            ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_COARSE_LOCATION
             ) == PackageManager.PERMISSION_GRANTED
-
-                    ||
-
-                    ContextCompat.checkSelfPermission(
-
-                        context,
-
-                        Manifest.permission.ACCESS_COARSE_LOCATION
-
-                    ) == PackageManager.PERMISSION_GRANTED
         )
     }
 
-
-    val permissionLauncher =
-        rememberLauncherForActivityResult(
-
-            contract =
-                ActivityResultContracts
-                    .RequestMultiplePermissions()
-
-        ) { permissions ->
-
-            hasLocationPermission =
-
-                permissions[
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                ] == true
-
-                        ||
-
-                        permissions[
-                            Manifest.permission.ACCESS_COARSE_LOCATION
-                        ] == true
-        }
-
-
-    // ========================================================
-    // REQUEST LOCATION
-    // ========================================================
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        hasLocationPermission = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+    }
 
     LaunchedEffect(Unit) {
-
         if (!hasLocationPermission) {
-
             permissionLauncher.launch(
-
                 arrayOf(
-
                     Manifest.permission.ACCESS_FINE_LOCATION,
-
                     Manifest.permission.ACCESS_COARSE_LOCATION
                 )
             )
         }
     }
 
-
-    // ========================================================
-    // PERMISSION SCREEN
-    // ========================================================
-
-    if (!hasLocationPermission) {
-
-        Column(
-
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-
-            verticalArrangement =
-                Arrangement.Center,
-
-            horizontalAlignment =
-                Alignment.CenterHorizontally
-
-        ) {
-
-            Text(
-
-                text =
-                    "Location permission is required",
-
-                style =
-                    MaterialTheme.typography.titleLarge
-            )
-
-
-            Spacer(
-                modifier =
-                    Modifier.height(16.dp)
-            )
-
-
-            Button(
-
-                onClick = {
-
-                    permissionLauncher.launch(
-
-                        arrayOf(
-
-                            Manifest.permission.ACCESS_FINE_LOCATION,
-
-                            Manifest.permission.ACCESS_COARSE_LOCATION
-                        )
-                    )
-                }
-
-            ) {
-
-                Text(
-                    text =
-                        "Allow Location"
-                )
-            }
-
-
-            Spacer(
-                modifier =
-                    Modifier.height(12.dp)
-            )
-
-
-            OutlinedButton(
-
-                onClick =
-                    onBack
-
-            ) {
-
-                Text(
-                    text =
-                        "Back"
-                )
-            }
-        }
-
-        return
+    val fusedLocationClient = remember {
+        LocationServices.getFusedLocationProviderClient(context)
     }
 
-
-    // ========================================================
-    // LOCATION CLIENT
-    // ========================================================
-
-    val fusedLocationClient =
-        remember {
-
-            LocationServices
-                .getFusedLocationProviderClient(
-                    context
-                )
-        }
-
-
     var currentLocation by remember {
-
         mutableStateOf<LatLng?>(null)
     }
 
-
-    // ========================================================
-    // GET LOCATION
-    // ========================================================
-
     LaunchedEffect(Unit) {
-
-        fusedLocationClient.lastLocation
-
-            .addOnSuccessListener { location ->
-
+        try {
+            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
                 if (location != null) {
-
-                    currentLocation =
-
-                        LatLng(
-
-                            location.latitude,
-
-                            location.longitude
-                        )
+                    currentLocation = LatLng(location.latitude, location.longitude)
                 }
             }
+        } catch (_: SecurityException) {}
     }
 
+    val pickupTransportStop = RouteData.canonicalStops.find { it.name.equals(pickupStop, true) }
+        ?: RouteData.canonicalStops.first()
 
-    // ========================================================
-    // MAP LOCATION
-    // ========================================================
-
-    val defaultLocation =
-        LatLng(
-
-            ruralRoute.first().latitude,
-
-            ruralRoute.first().longitude
+    val cameraPositionState = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(
+            LatLng(pickupTransportStop.latitude, pickupTransportStop.longitude),
+            13.5f
         )
-
-
-    val mapLocation =
-        currentLocation
-            ?: defaultLocation
-
-
-    // ========================================================
-    // CAMERA
-    // ========================================================
-
-    val cameraPositionState =
-        rememberCameraPositionState {
-
-            position =
-
-                CameraPosition.fromLatLngZoom(
-
-                    mapLocation,
-
-                    14f
-                )
-        }
-
-
-    LaunchedEffect(
-        currentLocation
-    ) {
-
-        currentLocation?.let { location ->
-
-            cameraPositionState.position =
-
-                CameraPosition.fromLatLngZoom(
-
-                    location,
-
-                    14f
-                )
-        }
     }
 
-
-    // ========================================================
-    // MAP
-    // ========================================================
-
-    Box(
-
-        modifier =
-            Modifier.fillMaxSize()
-
-    ) {
-
+    Box(modifier = Modifier.fillMaxSize()) {
         GoogleMap(
-
-            modifier =
-                Modifier.fillMaxSize(),
-
-            cameraPositionState =
-                cameraPositionState
-
+            modifier = Modifier.fillMaxSize(),
+            cameraPositionState = cameraPositionState
         ) {
-
-
-            // =================================================
-            // ROUTE
-            // =================================================
-
+            // CORRIDOR ROUTE POLYLINE
             Polyline(
-
-                points =
-                    ruralRoute.map {
-
-                        LatLng(
-
-                            it.latitude,
-
-                            it.longitude
-                        )
-                    },
-
-                width =
-                    8f
+                points = RouteData.canonicalStops.map { LatLng(it.latitude, it.longitude) },
+                color = Color(0xFF1976D2),
+                width = 10f
             )
 
+            // CORRIDOR STOPS MARKERS
+            RouteData.canonicalStops.forEach { stop ->
+                val isPickup = stop.name.equals(pickupStop, true)
+                val isDest = stop.name.equals(destStop, true)
 
-            // =================================================
-            // STOPS
-            // =================================================
-
-            ruralRoute.forEach { stop ->
+                val markerTitle = when {
+                    isPickup -> "Pickup: ${stop.name}"
+                    isDest -> "Destination: ${stop.name}"
+                    else -> stop.name
+                }
+                val markerSnippet = when {
+                    isPickup -> "Your boarding stop (${stop.sequence}/4)"
+                    isDest -> "Your destination (${stop.sequence}/4)"
+                    else -> "Corridor Stop ${stop.sequence}"
+                }
 
                 Marker(
-
-                    state =
-
-                        rememberMarkerState(
-
-                            position =
-
-                                LatLng(
-
-                                    stop.latitude,
-
-                                    stop.longitude
-                                )
-                        ),
-
-                    title =
-                        stop.name,
-
-                    snippet =
-                        "Route stop ${stop.sequence}"
+                    state = rememberMarkerState(position = LatLng(stop.latitude, stop.longitude)),
+                    title = markerTitle,
+                    snippet = markerSnippet
                 )
             }
 
+            // USER LOCATION MARKER
+            currentLocation?.let { loc ->
+                Marker(
+                    state = rememberMarkerState(position = loc),
+                    title = "Your Location",
+                    snippet = "GPS Position"
+                )
+            }
 
-            // =================================================
-            // USER LOCATION
-            // =================================================
-
-            Marker(
-
-                state =
-
-                    rememberMarkerState(
-
-                        position =
-                            mapLocation
-                    ),
-
-                title =
-
-                    if (
-                        currentLocation != null
-                    ) {
-
-                        "Your Location"
-
-                    } else {
-
-                        "Gurramguda"
-                    }
-            )
-
-
-            // =================================================
-            // TEMPORARY AUTO A01
-            // =================================================
-
-            Marker(
-
-                state =
-
-                    rememberMarkerState(
-
-                        position =
-
-                            LatLng(
-
-                                ruralRoute[0].latitude,
-
-                                ruralRoute[0].longitude
-                            )
-                    ),
-
-                title =
-                    "Auto A01",
-
-                snippet =
-                    "4 seats • At Gurramguda"
-            )
-
-
-            // =================================================
-            // TEMPORARY AUTO A02
-            // =================================================
-
-            Marker(
-
-                state =
-
-                    rememberMarkerState(
-
-                        position =
-
-                            LatLng(
-
-                                ruralRoute[1].latitude,
-
-                                ruralRoute[1].longitude
-                            )
-                    ),
-
-                title =
-                    "Auto A02",
-
-                snippet =
-                    "2 seats • Jay Suryapatnam"
-            )
+            // LIVE ANIMATED DRIVER VEHICLE MARKERS
+            liveDrivers.forEach { driver ->
+                key(driver.driverId) {
+                    AnimatedDriverMarker(
+                        driver = driver,
+                        passengerPickupStop = pickupStop,
+                        direction = direction,
+                        onMarkerClick = { selectedDriver = it }
+                    )
+                }
+            }
         }
 
-
         // ====================================================
-        // BACK BUTTON
+        // TOP OVERLAY: NAVIGATION & CORRIDOR DIRECTION BANNER
         // ====================================================
-
-        Button(
-
-            onClick =
-                onBack,
-
-            modifier =
-
-                Modifier
-                    .padding(16.dp)
-
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 40.dp, start = 16.dp, end = 16.dp)
+                .align(Alignment.TopCenter),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.9f))
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = MaterialTheme.colorScheme.onSurface
+                    )
+                }
 
-            Text(
-                text =
-                    "Back"
-            )
+                Spacer(modifier = Modifier.size(width = 10.dp, height = 0.dp))
+
+                Card(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = route.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "$pickupStop → $destStop",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Card(
+                            shape = RoundedCornerShape(8.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                            )
+                        ) {
+                            Text(
+                                text = direction.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // DRIVER COUNT STATUS BANNER
+            if (liveDrivers.isEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.95f)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.size(width = 10.dp, height = 0.dp))
+                        Column {
+                            Text(
+                                text = "0 autos currently en route",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Text(
+                                text = "No online autos travelling in your direction ($direction) at or before $pickupStop. Vehicles will appear live once active.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        }
+                    }
+                }
+            } else {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DirectionsCar,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.size(width = 10.dp, height = 0.dp))
+                        Column {
+                            Text(
+                                text = "${liveDrivers.size} auto${if (liveDrivers.size > 1) "s" else ""} en route to $pickupStop",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            val nearest = liveDrivers.first()
+                            val distText = if (nearest.isAtPassengerStop) {
+                                "Nearest auto is at your stop (${nearest.currentStop})"
+                            } else {
+                                "Nearest is ${nearest.stopsAway} stop(s) away at ${nearest.currentStop}"
+                            }
+                            Text(
+                                text = distText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ====================================================
+        // BOTTOM OVERLAY: DRIVER DETAILS & WAITING ACTIONS
+        // ====================================================
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+                .align(Alignment.BottomCenter),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Selected Driver Card
+            selectedDriver?.let { driver ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = driver.vehicleNumber,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            IconButton(onClick = { selectedDriver = null }) {
+                                Icon(Icons.Default.Close, contentDescription = "Close")
+                            }
+                        }
+
+                        Text(
+                            text = "Driver: ${driver.name} • ${driver.phone.ifBlank { "Corridor Operator" }}",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Current stop: ${driver.currentStop}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "•",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = if (driver.isAtPassengerStop) "At your stop" else "${driver.stopsAway} stops away",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "•",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "${driver.availableSeats} seats",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Waiting State Bar
+            if (waitingState.isWaiting) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = "Waiting at ${waitingState.pickupStop}",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${waitingState.waitingPassengersCount} passenger(s) waiting in queue",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Button(
+                            onClick = { passengerViewModel.stopWaiting() },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Cancel Wait", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            } else {
+                Button(
+                    onClick = {
+                        passengerViewModel.startWaiting(pickupStop, destStop, route.id)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.LocationOn, contentDescription = null)
+                    Spacer(modifier = Modifier.size(width = 8.dp, height = 0.dp))
+                    Text("I'm Waiting at $pickupStop", fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }

@@ -8,7 +8,7 @@ espressoCore = "3.5.1"
 lifecycleRuntimeKtx = "2.6.1"
 activityCompose = "1.8.0"
 kotlin = "2.2.10"
-composeBom = "2026.06.00"
+composeBom = "2026.09.00"
 mapsCompose = "6.12.2"
 playServicesLocation = "21.3.0"
 [libraries]
