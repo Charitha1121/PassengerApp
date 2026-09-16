@@ -515,36 +515,23 @@ class RideRepository(
                             val vehicleNumber = driverSnap.getStringSafe("vehicleNumber", default = "Auto #${uid.takeLast(4).uppercase()}")
                             val availableSeats = driverSnap.getIntSafe("availableSeats", default = 3)
 
-                            // Parse lat, lng, heading safely to avoid DatabaseException on Long/Float type conversion
+                            // Read coordinates with per-field fallback (most resilient against mixed update patterns)
                             val liveLocSnap = driverSnap.child("liveLocation")
-                            val lat = if (liveLocSnap.exists()) {
-                                liveLocSnap.getDoubleSafe("latitude", "lat")
-                            } else {
-                                driverSnap.getDoubleSafe("latitude", "lat")
-                            }
-                            val lng = if (liveLocSnap.exists()) {
-                                liveLocSnap.getDoubleSafe("longitude", "lng")
-                            } else {
-                                driverSnap.getDoubleSafe("longitude", "lng")
-                            }
+                            
+                            val lat = liveLocSnap.getDoubleSafe("latitude", "lat", 
+                                default = driverSnap.getDoubleSafe("latitude", "lat"))
+                            
+                            val lng = liveLocSnap.getDoubleSafe("longitude", "lng", 
+                                default = driverSnap.getDoubleSafe("longitude", "lng"))
 
-                            val heading = if (liveLocSnap.exists()) {
-                                liveLocSnap.getFloatSafe("heading", "bearing")
-                            } else {
-                                driverSnap.getFloatSafe("heading", "bearing")
-                            }
+                            val heading = liveLocSnap.getFloatSafe("heading", "bearing", 
+                                default = driverSnap.getFloatSafe("heading", "bearing"))
 
-                            val speed = if (liveLocSnap.exists()) {
-                                liveLocSnap.getFloatSafe("speed")
-                            } else {
-                                driverSnap.getFloatSafe("speed")
-                            }
+                            val speed = liveLocSnap.getFloatSafe("speed", 
+                                default = driverSnap.getFloatSafe("speed"))
 
-                            val timestamp = if (liveLocSnap.exists()) {
-                                liveLocSnap.getLongSafe("timestamp", default = System.currentTimeMillis())
-                            } else {
-                                driverSnap.getLongSafe("timestamp", default = System.currentTimeMillis())
-                            }
+                            val timestamp = liveLocSnap.getLongSafe("timestamp", "lastUpdated", 
+                                default = driverSnap.getLongSafe("timestamp", "lastUpdated", default = System.currentTimeMillis()))
 
                             // Filtering Rules:
                             // 1. Must be online or available (robust checks)
@@ -771,18 +758,14 @@ class RideRepository(
                                 continue
                             }
 
-                            // Read liveLocation broadcast continuously while online
+                            // Read coordinates with per-field fallback (most resilient against mixed update patterns)
                             val liveLocSnap = driverSnap.child("liveLocation")
-                            val lat = if (liveLocSnap.exists()) {
-                                liveLocSnap.getDoubleSafe("latitude", "lat")
-                            } else {
-                                driverSnap.getDoubleSafe("latitude", "lat")
-                            }
-                            val lng = if (liveLocSnap.exists()) {
-                                liveLocSnap.getDoubleSafe("longitude", "lng")
-                            } else {
-                                driverSnap.getDoubleSafe("longitude", "lng")
-                            }
+                            
+                            val lat = liveLocSnap.getDoubleSafe("latitude", "lat", 
+                                default = driverSnap.getDoubleSafe("latitude", "lat"))
+                            
+                            val lng = liveLocSnap.getDoubleSafe("longitude", "lng", 
+                                default = driverSnap.getDoubleSafe("longitude", "lng"))
 
                             // 4. Coordinates must be finite and non-zero
                             if (!lat.isFinite() || !lng.isFinite() || 
@@ -791,23 +774,14 @@ class RideRepository(
                                 continue
                             }
 
-                            val heading = if (liveLocSnap.exists()) {
-                                liveLocSnap.getFloatSafe("heading", "bearing")
-                            } else {
-                                driverSnap.getFloatSafe("heading", "bearing")
-                            }
+                            val heading = liveLocSnap.getFloatSafe("heading", "bearing", 
+                                default = driverSnap.getFloatSafe("heading", "bearing"))
 
-                            val speed = if (liveLocSnap.exists()) {
-                                liveLocSnap.getFloatSafe("speed")
-                            } else {
-                                driverSnap.getFloatSafe("speed")
-                            }
+                            val speed = liveLocSnap.getFloatSafe("speed", 
+                                default = driverSnap.getFloatSafe("speed"))
 
-                            val lastUpdated = if (liveLocSnap.exists()) {
-                                liveLocSnap.getLongSafe("lastUpdated", "timestamp", default = System.currentTimeMillis())
-                            } else {
-                                driverSnap.getLongSafe("lastUpdated", "timestamp", default = System.currentTimeMillis())
-                            }
+                            val lastUpdated = liveLocSnap.getLongSafe("lastUpdated", "timestamp", 
+                                default = driverSnap.getLongSafe("lastUpdated", "timestamp", default = System.currentTimeMillis()))
 
                             val name = driverSnap.getStringSafe("driverName").ifBlank {
                                 driverSnap.getStringSafe("name", default = "Auto Driver")

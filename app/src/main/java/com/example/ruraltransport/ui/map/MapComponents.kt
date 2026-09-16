@@ -65,7 +65,6 @@ fun AnimatedAutoMarker(
     autoIcon: BitmapDescriptor?,
     onClick: (LiveDriverPosition) -> Unit = {}
 ) {
-    // Initial coordinates snap immediately to prevent flying from (0, 0)
     val initialLat = if (driver.lat.isFinite()) driver.lat.toFloat() else 0f
     val initialLng = if (driver.lng.isFinite()) driver.lng.toFloat() else 0f
     val initialHeading = if (driver.heading.isFinite()) driver.heading else 0f
@@ -75,18 +74,19 @@ fun AnimatedAutoMarker(
     val animHeading = remember(driver.driverUid) { Animatable(initialHeading) }
 
     // Smooth position glide between updates (typical driver GPS interval ~3-4s)
+    // We use a longer duration (5s) to glide smoothly between potentially slow updates
     LaunchedEffect(driver.lat, driver.lng) {
         if (driver.lat.isFinite() && driver.lng.isFinite()) {
             launch {
                 animLat.animateTo(
                     targetValue = driver.lat.toFloat(),
-                    animationSpec = tween(durationMillis = 3500, easing = LinearEasing)
+                    animationSpec = tween(durationMillis = 5000, easing = LinearEasing)
                 )
             }
             launch {
                 animLng.animateTo(
                     targetValue = driver.lng.toFloat(),
-                    animationSpec = tween(durationMillis = 3500, easing = LinearEasing)
+                    animationSpec = tween(durationMillis = 5000, easing = LinearEasing)
                 )
             }
         }
@@ -98,19 +98,20 @@ fun AnimatedAutoMarker(
             val diff = shortestAngleDiff(animHeading.value, driver.heading)
             animHeading.animateTo(
                 targetValue = animHeading.value + diff,
-                animationSpec = tween(durationMillis = 600, easing = LinearEasing)
+                animationSpec = tween(durationMillis = 800, easing = LinearEasing)
             )
         }
     }
 
-    val currentLat = if (animLat.value.isFinite()) animLat.value.toDouble() else 0.0
-    val currentLng = if (animLng.value.isFinite()) animLng.value.toDouble() else 0.0
-    val currentPosition = LatLng(currentLat, currentLng)
+    // Stable marker state tied to driverUid
+    val markerState = rememberMarkerState(key = driver.driverUid, position = LatLng(initialLat.toDouble(), initialLng.toDouble()))
     
-    val markerState = rememberMarkerState(position = currentPosition)
-    
-    LaunchedEffect(currentPosition) {
-        markerState.position = currentPosition
+    // Update marker position directly as animation progresses
+    // This avoids restarting LaunchedEffect every frame
+    androidx.compose.runtime.SideEffect {
+        val lat = if (animLat.value.isFinite()) animLat.value.toDouble() else 0.0
+        val lng = if (animLng.value.isFinite()) animLng.value.toDouble() else 0.0
+        markerState.position = LatLng(lat, lng)
     }
 
     val speedKmh = (driver.speed * 3.6f).toInt()
