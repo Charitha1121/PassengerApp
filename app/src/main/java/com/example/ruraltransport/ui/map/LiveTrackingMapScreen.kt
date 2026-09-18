@@ -143,7 +143,7 @@ fun LiveTrackingMapScreen(
     // Cache the custom auto-rickshaw icon - handle potential null if SDK not ready
     val autoIconDescriptor by androidx.compose.runtime.produceState<BitmapDescriptor?>(initialValue = null) {
         value = try {
-            bitmapDescriptorFromVector(context, R.drawable.ic_auto_rickshaw, 44)
+            bitmapDescriptorFromVector(context, R.drawable.ic_auto_rickshaw, 64)
         } catch (e: Exception) {
             null
         }

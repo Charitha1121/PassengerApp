@@ -1,65 +1,63 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="48dp"
-    android:height="48dp"
-    android:viewportWidth="48"
-    android:viewportHeight="48">
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
 
-    <!-- Outer Drop Shadow for Depth on Google Maps -->
+    <!-- Subtle Ground Shadow -->
     <path
         android:fillColor="#33000000"
-        android:pathData="M24,3 C17,3 15,10 15,20 L14,35 C14,41 18,44 24,44 C30,44 34,41 34,35 L33,20 C33,10 31,3 24,3 Z" />
+        android:pathData="M32,4C20,4 16,14 16,28L16,52C16,60 24,62 32,62C40,62 48,60 48,52L48,28C48,14 44,4 32,4Z" />
 
-    <!-- Left Rear Wheel -->
-    <path
-        android:fillColor="#212121"
-        android:pathData="M11,26 A2.5,6 0 0 0 11,38 L13,38 L13,26 Z" />
-
-    <!-- Right Rear Wheel -->
-    <path
-        android:fillColor="#212121"
-        android:pathData="M35,26 L35,38 L37,38 A2.5,6 0 0 0 37,26 Z" />
-
-    <!-- Front Wheel (Center Front) -->
-    <path
-        android:fillColor="#212121"
-        android:pathData="M22.5,4 A1.5,4 0 0 0 25.5,4 L25.5,9 L22.5,9 Z" />
-
-    <!-- Auto Rickshaw Main Body (Dark Green / Black Chassis base) -->
+    <!-- Main Chassis - Traditional Indian Green -->
     <path
         android:fillColor="#1B5E20"
-        android:pathData="M24,5 C18,5 15,12 15,22 L15,36 C15,40 18,42 24,42 C30,42 33,40 33,36 L33,22 C33,12 30,5 24,5 Z" />
+        android:pathData="M32,6C22,6 18,16 18,28L18,50C18,56 24,58 32,58C40,58 46,56 46,50L46,28C46,16 42,6 32,6Z" />
 
-    <!-- Auto Rickshaw Iconic Yellow Canopy / Hood -->
+    <!-- Iconic Yellow Canopy -->
     <path
         android:fillColor="#FFD600"
-        android:pathData="M24,7 C19,7 16,13 16,21 L16,33 C16,36 19,38 24,38 C29,38 32,36 32,33 L32,21 C32,13 29,7 24,7 Z" />
+        android:pathData="M32,10C24,10 20,18 20,28L20,46C20,52 24,54 32,54C40,54 44,52 44,46L44,28C44,18 40,10 32,10Z" />
 
-    <!-- Windshield (Tapered front glass) -->
+    <!-- Front Nose Section (Depth Effect) -->
     <path
-        android:fillColor="#80D8FF"
-        android:pathData="M20,11 L28,11 L29,15 L19,15 Z" />
+        android:fillColor="#FBC02D"
+        android:pathData="M32,10C26,10 22,16 22,24L42,24C42,16 38,10 32,10Z" />
 
-    <!-- Windshield Frame Accent -->
+    <!-- Professional Glass Windshield -->
     <path
-        android:fillColor="#263238"
-        android:pathData="M19,10.5 L29,10.5 L29,11.5 L19,11.5 Z" />
+        android:fillColor="#E1F5FE"
+        android:pathData="M26,18L38,18L40,28L24,28Z" />
 
-    <!-- Roof Rib / Center Stripe for orientation visual cue -->
+    <!-- Windshield Glare Detail -->
     <path
-        android:fillColor="#FFAB00"
-        android:pathData="M23,17 L25,17 L25,35 L23,35 Z" />
+        android:fillColor="#FFFFFF"
+        android:pathData="M27,19L31,19L32,24L28,24Z"
+        android:alpha="0.4" />
 
-    <!-- Front Headlight (Bright yellow-white dot pointing up) -->
+    <!-- Chassis Side Steps / Protective Rails -->
     <path
-        android:fillColor="#FFFF8D"
-        android:pathData="M22,5.5 A2,2 0 0 1 26,5.5 L26,7 L22,7 Z" />
+        android:fillColor="#212121"
+        android:pathData="M19,26L20,26L20,50L19,50ZM44,26L45,26L45,50L44,50Z" />
 
-    <!-- Rear Tail Lights (Left & Right Red) -->
+    <!-- Front Mudguard / Wheel Base Tip -->
     <path
-        android:fillColor="#D50000"
-        android:pathData="M16,39 L19,39 L19,41 L16,41 Z" />
+        android:fillColor="#212121"
+        android:pathData="M29,6L35,6L35,12L29,12Z" />
+
+    <!-- Brake Lights (Sleek Modern Design) -->
     <path
-        android:fillColor="#D50000"
-        android:pathData="M29,39 L32,39 L32,41 L29,41 Z" />
+        android:fillColor="#D32F2F"
+        android:pathData="M22,54L26,54L26,56L22,56ZM38,54L42,54L42,56L38,56Z" />
+
+    <!-- Roof Stripe (Professional Contrast) -->
+    <path
+        android:fillColor="#FFA000"
+        android:pathData="M31.5,28L32.5,28L32.5,48L31.5,48Z" />
+
+    <!-- Orientation Marker / Indicator -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M32,7L33,10L31,10Z" />
 
 </vector>
