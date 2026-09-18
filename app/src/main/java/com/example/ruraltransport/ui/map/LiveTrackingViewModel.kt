@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.ruraltransport.data.model.LiveDriverPosition
 import com.example.ruraltransport.data.model.RouteData
 import com.example.ruraltransport.data.model.RouteDirection
+import com.example.ruraltransport.data.model.RouteInfo
+import com.example.ruraltransport.data.model.TransportStop
 import com.example.ruraltransport.data.repository.RideRepository
 import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.Job
@@ -33,11 +35,46 @@ class LiveTrackingViewModel(
     private val _corridorRouteId = MutableStateFlow(RouteData.DEFAULT_ROUTE_ID)
     val corridorRouteId: StateFlow<String> = _corridorRouteId.asStateFlow()
 
+    private val _trackingRoute = MutableStateFlow<RouteInfo?>(null)
+    val trackingRoute: StateFlow<RouteInfo?> = _trackingRoute.asStateFlow()
+
+    private val _trackingDirection = MutableStateFlow<RouteDirection?>(null)
+    val trackingDirection: StateFlow<RouteDirection?> = _trackingDirection.asStateFlow()
+
     private var browseJob: Job? = null
     private var trackingJob: Job? = null
 
     init {
-        observeCorridorDrivers(RouteData.DEFAULT_ROUTE_ID)
+        observeCorridorDrivers(routeId = RouteData.DEFAULT_ROUTE_ID)
+    }
+
+    /**
+     * Sets the specific corridor route and direction selected from search.
+     * Starts continuous tracking for drivers matching this exact corridor.
+     */
+    fun setTrackingRoute(
+        route: RouteInfo,
+        direction: RouteDirection,
+        pickupStop: TransportStop? = null,
+        selectedDriver: LiveDriverPosition? = null
+    ) {
+        _trackingRoute.value = route
+        _trackingDirection.value = direction
+        _corridorRouteId.value = route.id
+        if (selectedDriver != null) {
+            _selectedDriver.value = selectedDriver
+        }
+        val pickupLatLng = pickupStop?.let {
+            if (it.latitude.isFinite() && it.longitude.isFinite() && (it.latitude != 0.0 || it.longitude != 0.0)) {
+                LatLng(it.latitude, it.longitude)
+            } else null
+        }
+        observeCorridorDrivers(
+            route = route,
+            routeId = route.id,
+            direction = direction,
+            pickupLatLng = pickupLatLng
+        )
     }
 
     /**
@@ -45,14 +82,22 @@ class LiveTrackingViewModel(
      * Calculates distance and ETA to [pickupLatLng] at rural corridor speed (20 km/h).
      */
     fun observeCorridorDrivers(
-        routeId: String? = RouteData.DEFAULT_ROUTE_ID,
-        direction: RouteDirection? = null,
+        route: RouteInfo? = _trackingRoute.value,
+        routeId: String? = route?.id ?: _corridorRouteId.value,
+        direction: RouteDirection? = _trackingDirection.value,
         pickupLatLng: LatLng? = null
     ) {
+        if (route != null) {
+            _trackingRoute.value = route
+        }
+        if (direction != null) {
+            _trackingDirection.value = direction
+        }
         _corridorRouteId.value = routeId ?: RouteData.DEFAULT_ROUTE_ID
         browseJob?.cancel()
         browseJob = viewModelScope.launch {
             repository.observeCorridorBrowseDrivers(
+                route = route,
                 routeId = routeId,
                 direction = direction,
                 pickupLatLng = pickupLatLng

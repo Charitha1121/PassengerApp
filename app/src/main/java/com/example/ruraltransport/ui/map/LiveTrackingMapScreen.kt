@@ -114,26 +114,31 @@ fun LiveTrackingMapScreen(
         else -> null
     }
 
-    val currentRoute = journeyState.selectedRoute ?: com.example.ruraltransport.data.repository.RouteRepository().defaultRoute
-    val pickupStopName = journeyState.pickupStop?.name ?: RouteData.stops.first()
-    val destStopName = journeyState.destinationStop?.name ?: RouteData.stops.last()
-    val direction = RouteData.getDirection(pickupStopName, destStopName)
+    val trackingRoute by liveTrackingViewModel.trackingRoute.collectAsState()
+    val trackingDirection by liveTrackingViewModel.trackingDirection.collectAsState()
 
-    val pickupTransportStop = RouteData.canonicalStops.find { it.name.equals(pickupStopName, true) }
-        ?: RouteData.canonicalStops.first()
-    val pickupLatLng = remember(pickupTransportStop) {
-        val lat = pickupTransportStop.latitude
-        val lng = pickupTransportStop.longitude
-        if (lat.isFinite() && lng.isFinite() && lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0) {
+    val currentRoute = trackingRoute ?: journeyState.selectedRoute ?: com.example.ruraltransport.data.repository.RouteRepository().defaultRoute
+    val pickupStop = journeyState.pickupStop ?: currentRoute.stops.firstOrNull() ?: RouteData.canonicalStops.first()
+    val destStop = journeyState.destinationStop ?: currentRoute.stops.lastOrNull() ?: RouteData.canonicalStops.last()
+    val pickupStopName = pickupStop.name
+    val destStopName = destStop.name
+
+    val direction = trackingDirection ?: journeyState.selectedDirection ?: RouteData.getDirection(pickupStopName, destStopName)
+
+    val pickupLatLng = remember(pickupStop) {
+        val lat = pickupStop.latitude
+        val lng = pickupStop.longitude
+        if (lat.isFinite() && lng.isFinite() && lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0 && (lat != 0.0 || lng != 0.0)) {
             LatLng(lat, lng)
         } else {
-            LatLng(0.0, 0.0)
+            LatLng(17.2942, 78.5675)
         }
     }
 
     // STEP 4: Ungate map from ride acceptance. Always observe all operating autos on corridor via liveLocation.
     LaunchedEffect(currentRoute.id, direction, pickupLatLng) {
         liveTrackingViewModel.observeCorridorDrivers(
+            route = currentRoute,
             routeId = currentRoute.id,
             direction = direction,
             pickupLatLng = pickupLatLng
@@ -193,8 +198,8 @@ fun LiveTrackingMapScreen(
     }
 
     val cameraPositionState = rememberCameraPositionState {
-        val lat = pickupTransportStop.latitude
-        val lng = pickupTransportStop.longitude
+        val lat = pickupLatLng.latitude
+        val lng = pickupLatLng.longitude
         val validTarget = if (lat.isFinite() && lng.isFinite() && (lat != 0.0 || lng != 0.0)) {
             LatLng(lat, lng)
         } else {
@@ -202,6 +207,18 @@ fun LiveTrackingMapScreen(
         }
         
         position = CameraPosition.fromLatLngZoom(validTarget, 14.2f)
+    }
+
+    LaunchedEffect(currentRoute.id, pickupLatLng) {
+        if (pickupLatLng.latitude != 0.0 || pickupLatLng.longitude != 0.0) {
+            try {
+                val update = com.google.android.gms.maps.CameraUpdateFactory.newLatLngZoom(
+                    pickupLatLng,
+                    14.2f
+                )
+                cameraPositionState.animate(update)
+            } catch (_: Exception) {}
+        }
     }
 
     LaunchedEffect(selectedDriver?.driverUid) {
@@ -232,20 +249,22 @@ fun LiveTrackingMapScreen(
             modifier = Modifier.fillMaxSize(),
             cameraPositionState = cameraPositionState
         ) {
-            // Corridor Fixed Route Line
+            // Corridor Route Line
             Polyline(
-                points = RouteData.canonicalStops
-                    .filter { it.latitude.isFinite() && it.longitude.isFinite() }
+                points = currentRoute.stops
+                    .filter { it.latitude.isFinite() && it.longitude.isFinite() && (it.latitude != 0.0 || it.longitude != 0.0) }
                     .map { LatLng(it.latitude, it.longitude) },
                 color = Color(0xFF1976D2),
                 width = 12f
             )
 
-            // Fixed Corridor Stops
-            RouteData.canonicalStops.forEach { stop ->
+            // Corridor Stops
+            val totalStops = currentRoute.stops.size
+            currentRoute.stops.forEach { stop ->
                 if (stop.latitude.isFinite() && stop.longitude.isFinite() &&
                     stop.latitude >= -90.0 && stop.latitude <= 90.0 &&
-                    stop.longitude >= -180.0 && stop.longitude <= 180.0
+                    stop.longitude >= -180.0 && stop.longitude <= 180.0 &&
+                    (stop.latitude != 0.0 || stop.longitude != 0.0)
                 ) {
                     val isPickup = stop.name.equals(pickupStopName, true)
                     val isDest = stop.name.equals(destStopName, true)
@@ -256,12 +275,12 @@ fun LiveTrackingMapScreen(
                         else -> stop.name
                     }
                     val markerSnippet = when {
-                        isPickup -> "Boarding point (${stop.sequence}/4)"
-                        isDest -> "Drop-off point (${stop.sequence}/4)"
-                        else -> "Corridor stop ${stop.sequence}"
+                        isPickup -> "Boarding point (${stop.sequence}/$totalStops)"
+                        isDest -> "Drop-off point (${stop.sequence}/$totalStops)"
+                        else -> "Corridor stop ${stop.sequence}/$totalStops"
                     }
 
-                    key("stop_${stop.name}") {
+                    key("stop_${stop.id}_${stop.name}") {
                         Marker(
                             state = rememberMarkerState(
                                 position = LatLng(stop.latitude, stop.longitude)

@@ -100,6 +100,7 @@ import com.example.ruraltransport.ui.forecast.ForecastViewModel
 import com.example.ruraltransport.ui.ride.ActiveRideScreen
 import com.example.ruraltransport.ui.ride.ActiveRideViewModel
 import com.example.ruraltransport.ui.map.LiveTrackingMapScreen
+import com.example.ruraltransport.ui.search.RouteSearchScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 // ============================================================
@@ -282,7 +283,8 @@ enum class AppScreen {
     AVAILABILITY,
     ACTIVE_RIDE,
     DRIVER,
-    MAP
+    MAP,
+    SEARCH
 }
 
 
@@ -344,12 +346,13 @@ fun RuralTransportApp(
                 liveTrackingViewModel = liveTrackingViewModel,
                 onNavigateToProfile = onNavigateToProfile,
                 onNavigateToForecast = { routeId, pickupId, destId, targetEpochMillis, queryEpochMillis ->
-                    val foundPickup = ruralRoute.find { it.id == pickupId } ?: ruralRoute.first()
-                    val foundDest = ruralRoute.find { it.id == destId } ?: ruralRoute.last()
+                    val currentRoute = journeyViewModel.uiState.value.selectedRoute ?: RouteData.defaultRouteInfo
+                    val foundPickup = currentRoute.stops.find { it.id == pickupId } ?: currentRoute.stops.first()
+                    val foundDest = currentRoute.stops.find { it.id == destId } ?: currentRoute.stops.last()
                     selectedStop = foundPickup
                     forecastViewModel.loadForecast(
                         routeId = routeId,
-                        routeName = "Gurramguda — Nadergul Corridor",
+                        routeName = currentRoute.name,
                         pickupId = pickupId,
                         pickupName = foundPickup.name,
                         destId = destId,
@@ -363,7 +366,10 @@ fun RuralTransportApp(
                     val dest = journeyViewModel.uiState.value.destinationStop?.name ?: com.example.ruraltransport.data.model.RouteData.stops.last()
                     passengerViewModel.startWaiting(stop.name, dest)
                 },
-                onNavigateToMap = onOpenMap
+                onNavigateToMap = onOpenMap,
+                onNavigateToSearch = {
+                    currentScreen = AppScreen.SEARCH
+                }
             )
         }
 
@@ -425,14 +431,15 @@ fun RuralTransportApp(
                     firebaseError,
 
                 onViewAvailability = {
-                    val stop = selectedStop ?: ruralRoute.first()
+                    val currentRoute = journeyViewModel.uiState.value.selectedRoute ?: RouteData.defaultRouteInfo
+                    val stop = selectedStop ?: currentRoute.stops.first()
                     forecastViewModel.loadForecast(
-                        routeId = "ROUTE_01",
-                        routeName = "Gurramguda — Nadergul Corridor",
+                        routeId = currentRoute.id,
+                        routeName = currentRoute.name,
                         pickupId = stop.id,
                         pickupName = stop.name,
-                        destId = "STOP_03",
-                        destName = "Sphoorthy College",
+                        destId = currentRoute.stops.last().id,
+                        destName = currentRoute.stops.last().name,
                         targetEpochMillis = System.currentTimeMillis(),
                         queryEpochMillis = System.currentTimeMillis()
                     )
@@ -529,6 +536,28 @@ fun RuralTransportApp(
                 passengerViewModel = passengerViewModel,
                 onBack = {
                     currentScreen = AppScreen.HOME
+                }
+            )
+        }
+
+        // ====================================================
+        // SEARCH BY SOURCE AND DESTINATION
+        // ====================================================
+
+        AppScreen.SEARCH -> {
+
+            RouteSearchScreen(
+                passengerViewModel = passengerViewModel,
+                onBack = {
+                    currentScreen = AppScreen.HOME
+                },
+                onNavigateToLiveRoute = { route, direction, pickup, dest, selectedDriver ->
+                    journeyViewModel.selectRoute(route)
+                    journeyViewModel.selectPickupStop(pickup)
+                    journeyViewModel.selectDestinationStop(dest)
+                    journeyViewModel.selectDirection(direction)
+                    liveTrackingViewModel.setTrackingRoute(route, direction, pickup, selectedDriver)
+                    onOpenMap()
                 }
             )
         }

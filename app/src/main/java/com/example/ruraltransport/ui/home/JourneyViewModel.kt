@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ruraltransport.data.model.JourneyTimeSelection
 import com.example.ruraltransport.data.model.JourneyValidationResult
+import com.example.ruraltransport.data.model.RouteDirection
 import com.example.ruraltransport.data.model.RouteInfo
 import com.example.ruraltransport.data.model.TimeSelectionMode
 import com.example.ruraltransport.data.model.TransportStop
@@ -17,6 +18,7 @@ import java.util.Calendar
 data class JourneyUiState(
     val routes: List<RouteInfo> = emptyList(),
     val selectedRoute: RouteInfo? = null,
+    val selectedDirection: RouteDirection = RouteDirection.FORWARD,
     val pickupStop: TransportStop? = null,
     val destinationStop: TransportStop? = null,
     val timeSelection: JourneyTimeSelection = JourneyTimeSelection(),
@@ -71,6 +73,10 @@ class JourneyViewModel(
     fun selectDestinationStop(stop: TransportStop) {
         _uiState.value = _uiState.value.copy(destinationStop = stop)
         validate()
+    }
+
+    fun selectDirection(direction: RouteDirection) {
+        _uiState.value = _uiState.value.copy(selectedDirection = direction)
     }
 
     fun setTimeMode(mode: TimeSelectionMode) {
