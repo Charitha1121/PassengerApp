@@ -74,8 +74,6 @@ import kotlinx.coroutines.launch
 
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Schedule
-import com.example.ruraltransport.ui.ride.ActiveRideViewModel
-import com.example.ruraltransport.ui.ride.RideUiState
 
 /**
  * Live Corridor Tracking Map Screen:
@@ -88,14 +86,12 @@ fun LiveTrackingMapScreen(
     onBack: () -> Unit,
     journeyViewModel: JourneyViewModel = viewModel(),
     passengerViewModel: PassengerViewModel = viewModel(),
-    activeRideViewModel: ActiveRideViewModel = viewModel(),
     liveTrackingViewModel: LiveTrackingViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val journeyState by journeyViewModel.uiState.collectAsState()
     val activeDrivers by liveTrackingViewModel.activeDrivers.collectAsState()
     val selectedDriver by liveTrackingViewModel.selectedDriver.collectAsState()
-    val rideState by activeRideViewModel.rideState.collectAsState()
 
     // Ensure Google Maps is initialized early to prevent BitmapDescriptorFactory crashes
     remember {
@@ -107,12 +103,6 @@ fun LiveTrackingMapScreen(
         true
     }
 
-    val assignedRide = when (val s = rideState) {
-        is RideUiState.DriverAssigned -> s.ride
-        is RideUiState.InProgress -> s.ride
-        is RideUiState.Completed -> s.ride
-        else -> null
-    }
 
     val trackingRoute by liveTrackingViewModel.trackingRoute.collectAsState()
     val trackingDirection by liveTrackingViewModel.trackingDirection.collectAsState()
@@ -400,45 +390,9 @@ fun LiveTrackingMapScreen(
             }
 
             // ====================================================
-            // STATUS BANNER: ACTIVE, BROWSE, OR EMPTY STATE
+            // STATUS BANNER: BROWSE OR EMPTY STATE
             // ====================================================
-            if (assignedRide != null) {
-                // Accepted Ride Banner
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f)
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DirectionsCar,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column {
-                            Text(
-                                text = "Driver Assigned • On The Way",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            Text(
-                                text = "${assignedRide.driverName ?: "Driver"} (${assignedRide.vehicleNumber ?: "Auto"})",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    }
-                }
-            } else if (activeDrivers.isEmpty()) {
+            if (activeDrivers.isEmpty()) {
                 // Empty State Banner
                 Card(
                     modifier = Modifier.fillMaxWidth(),

@@ -97,8 +97,6 @@ import com.example.ruraltransport.ui.home.HomeScreen
 import com.example.ruraltransport.ui.home.JourneyViewModel
 import com.example.ruraltransport.ui.forecast.ForecastScreen
 import com.example.ruraltransport.ui.forecast.ForecastViewModel
-import com.example.ruraltransport.ui.ride.ActiveRideScreen
-import com.example.ruraltransport.ui.ride.ActiveRideViewModel
 import com.example.ruraltransport.ui.map.LiveTrackingMapScreen
 import com.example.ruraltransport.ui.search.RouteSearchScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -242,7 +240,6 @@ class MainActivity : ComponentActivity() {
 
                 val journeyViewModel: JourneyViewModel = viewModel()
                 val passengerViewModel: PassengerViewModel = viewModel()
-                val activeRideViewModel: ActiveRideViewModel = viewModel()
                 val liveTrackingViewModel: com.example.ruraltransport.ui.map.LiveTrackingViewModel = viewModel()
 
                 AppNavigation(
@@ -252,7 +249,6 @@ class MainActivity : ComponentActivity() {
                             onOpenMap = onNavigateToMap,
                             journeyViewModel = journeyViewModel,
                             passengerViewModel = passengerViewModel,
-                            activeRideViewModel = activeRideViewModel,
                             liveTrackingViewModel = liveTrackingViewModel
                         )
                     },
@@ -260,7 +256,6 @@ class MainActivity : ComponentActivity() {
                         LiveTrackingMapScreen(
                             journeyViewModel = journeyViewModel,
                             passengerViewModel = passengerViewModel,
-                            activeRideViewModel = activeRideViewModel,
                             liveTrackingViewModel = liveTrackingViewModel,
                             onBack = onBack
                         )
@@ -281,7 +276,6 @@ enum class AppScreen {
     HOME,
     DEMAND,
     AVAILABILITY,
-    ACTIVE_RIDE,
     DRIVER,
     MAP,
     SEARCH
@@ -298,7 +292,6 @@ fun RuralTransportApp(
     onOpenMap: () -> Unit = {},
     journeyViewModel: JourneyViewModel = viewModel(),
     forecastViewModel: ForecastViewModel = viewModel(),
-    activeRideViewModel: ActiveRideViewModel = viewModel(),
     passengerViewModel: com.example.ruraltransport.ui.home.PassengerViewModel = viewModel(),
     liveTrackingViewModel: com.example.ruraltransport.ui.map.LiveTrackingViewModel = viewModel()
 ) {
@@ -487,42 +480,11 @@ fun RuralTransportApp(
                 onWaitingHere = { stopId, stopName ->
                     val dest = journeyViewModel.uiState.value.destinationStop?.name ?: com.example.ruraltransport.data.model.RouteData.stops.last()
                     passengerViewModel.startWaiting(stopName, dest)
-                },
-                onRequestRide = { forecast ->
-                    val currentUser = FirebaseAuth.getInstance().currentUser
-                    activeRideViewModel.requestRide(
-                        passengerId = currentUser?.uid ?: "",
-                        passengerName = currentUser?.displayName ?: (currentUser?.email?.substringBefore("@") ?: "Passenger"),
-                        passengerPhone = "9876543210",
-                        routeId = forecast.routeId,
-                        routeName = forecast.routeName,
-                        pickupStopId = forecast.pickupStopId,
-                        pickupStopName = forecast.pickupStopName,
-                        destStopId = forecast.destStopId,
-                        destStopName = forecast.destStopName,
-                        requestedSeats = 1,
-                        targetTime = forecast.targetEpochMillis
-                    )
-                    currentScreen = AppScreen.ACTIVE_RIDE
                 }
             )
         }
 
 
-        // ====================================================
-        // ACTIVE RIDE
-        // ====================================================
-
-        AppScreen.ACTIVE_RIDE -> {
-
-            ActiveRideScreen(
-                activeRideViewModel = activeRideViewModel,
-                routeStops = ruralRoute,
-                onBackToHome = {
-                    currentScreen = AppScreen.HOME
-                }
-            )
-        }
 
 
         // ====================================================

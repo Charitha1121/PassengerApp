@@ -70,8 +70,7 @@ fun ForecastScreen(
     forecastViewModel: ForecastViewModel,
     passengerViewModel: com.example.ruraltransport.ui.home.PassengerViewModel = androidx.lifecycle.viewmodel.compose.viewModel(),
     onBack: () -> Unit,
-    onWaitingHere: (stopId: String, stopName: String) -> Unit = { _, _ -> },
-    onRequestRide: (forecast: AvailabilityForecast) -> Unit = {}
+    onWaitingHere: (stopId: String, stopName: String) -> Unit = { _, _ -> }
 ) {
     val uiState by forecastViewModel.uiState.collectAsState()
 
@@ -149,7 +148,6 @@ fun ForecastScreen(
                         forecast = state.forecast,
                         passengerViewModel = passengerViewModel,
                         onWaitingHere = onWaitingHere,
-                        onRequestRide = onRequestRide,
                         onBack = onBack
                     )
                 }
@@ -163,7 +161,6 @@ private fun ForecastContent(
     forecast: AvailabilityForecast,
     passengerViewModel: com.example.ruraltransport.ui.home.PassengerViewModel,
     onWaitingHere: (stopId: String, stopName: String) -> Unit,
-    onRequestRide: (forecast: AvailabilityForecast) -> Unit,
     onBack: () -> Unit
 ) {
     val targetDateSdf = SimpleDateFormat("EEE, dd MMM", Locale.getDefault())
@@ -521,35 +518,6 @@ private fun ForecastContent(
             val currentUser = FirebaseAuth.getInstance().currentUser
             val isAuthReady = currentUser != null
 
-            // STEP 5: "Request Auto" flow is disabled for today; "I'm Waiting" is the sole passenger interaction.
-            /*
-            Button(
-                onClick = { if (isAuthReady) onRequestRide(forecast) },
-                enabled = isAuthReady,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(Icons.Default.DirectionsCar, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = if (isAuthReady) "Request Auto Now" else "Signing In...",
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            if (!isAuthReady) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Please ensure you are signed in to request a ride.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            */
 
             val isCurrentlyWaitingHere = waitingState.isWaiting &&
                 (waitingState.pickupStop.equals(forecast.pickupStopName, ignoreCase = true) ||

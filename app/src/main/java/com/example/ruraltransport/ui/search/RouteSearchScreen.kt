@@ -467,10 +467,10 @@ private fun NoResultsView() {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(text = "No Routes Found", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(text = "No Autos Available", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             }
             Text(
-                text = "We couldn't find any direct or nearby corridors for this journey. Try selecting different stops or check back later.",
+                text = "No direct or nearby corridors found for this journey. TSGRC bus timing for this route coming soon.",
                 style = MaterialTheme.typography.bodyMedium
             )
         }

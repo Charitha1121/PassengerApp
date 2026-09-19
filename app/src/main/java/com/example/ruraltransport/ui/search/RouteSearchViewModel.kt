@@ -154,8 +154,8 @@ class RouteSearchViewModel(
             // 1. Find all matching routes for this pair
             val directMatches = RouteData.findAllMatchingRoutes(src.name, dst.name)
             
-            // 2. Find nearby stops as fallbacks
-            val nearbyStopsWithDist = RouteData.findNearbyStops(src, maxDistanceKm = 3.0)
+            // 2. Find nearby stops as fallbacks (AC4: 2km radius)
+            val nearbyStopsWithDist = RouteData.findNearbyStops(src, maxDistanceKm = 2.0)
 
             // 3. Observe ALL active drivers to filter them later
             repository.observeCorridorBrowseDrivers(

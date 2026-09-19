@@ -160,18 +160,6 @@ fun ProfileScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Ride History Button
-            OutlinedButton(
-                onClick = onNavigateToHistory,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(Icons.Default.History, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("View Ride History", fontWeight = FontWeight.SemiBold)
-            }
 
             Spacer(modifier = Modifier.height(8.dp))
 

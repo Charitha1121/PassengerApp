@@ -100,7 +100,6 @@ class RideRepository(
         }
     }
 
-    private val requestsRef = database.reference.child("ride_requests")
     private val demandRef = database.reference.child("passenger_demand")
     private val locationsRef = database.reference.child("locations")
 
@@ -361,7 +360,7 @@ class RideRepository(
                             val isRideActive = liveLocSnap.getBooleanSafe("isRideActive", default = driverSnap.getBooleanSafe("isRideActive", default = false))
                             val availableSeats = liveLocSnap.getIntSafe("availableSeats", default = driverSnap.getIntSafe("availableSeats", default = 3))
 
-                            if (!isOnline || !isAvailable) continue
+                            if (!isOnline && !isAvailable) continue
 
                             val driverRouteId = liveLocSnap.getStringSafe("routeId", default = driverSnap.getStringSafe("routeId"))
                             val activeDirection = liveLocSnap.getStringSafe("activeDirection", default = driverSnap.getStringSafe("activeDirection"))
@@ -474,54 +473,4 @@ class RideRepository(
         awaitClose { trackingRef.removeEventListener(listener) }
     }
 
-    suspend fun createRideRequest(request: RideRequest): Result<RideRequest> {
-        return try {
-            val ref = requestsRef.push()
-            val id = ref.key ?: throw Exception("Failed to generate request ID")
-            val newRequest = request.copy(requestId = id, createdAt = System.currentTimeMillis())
-            ref.setValue(newRequest).await<Void>()
-            Result.success(newRequest)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    fun observeRideRequest(requestId: String): Flow<RideRequest?> = callbackFlow {
-        val ref = requestsRef.child(requestId)
-        val listener = object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                trySend(snapshot.getValue(RideRequest::class.java))
-            }
-            override fun onCancelled(error: DatabaseError) {
-                close(error.toException())
-            }
-        }
-        ref.addValueEventListener(listener)
-        awaitClose { ref.removeEventListener(listener) }
-    }
-
-    suspend fun cancelRideRequest(requestId: String): Result<Unit> {
-        return try {
-            requestsRef.child(requestId).child("status").setValue(RideStatus.CANCELLED.name).await<Void>()
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    fun getPassengerRideHistory(passengerUid: String): Flow<List<RideRequest>> = callbackFlow {
-        val query = requestsRef.orderByChild("passengerId").equalTo(passengerUid)
-        val listener = object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val list = snapshot.children.mapNotNull { it.getValue(RideRequest::class.java) }
-                    .sortedByDescending { it.createdAt }
-                trySend(list)
-            }
-            override fun onCancelled(error: DatabaseError) {
-                close(error.toException())
-            }
-        }
-        query.addValueEventListener(listener)
-        awaitClose { query.removeEventListener(listener) }
-    }
 }
